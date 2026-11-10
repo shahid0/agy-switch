@@ -67,6 +67,9 @@ export async function login(opts: {
       AGY_ACP_FORCE_FILE_STORAGE: "1",
       PYTHONUNBUFFERED: "1",
       TMPDIR: join(acpDir, "tmp"),
+      // The harness always calls Python's webbrowser.open() on the authorize
+      // URL. BROWSER=true turns that into a no-op so --browser alone decides.
+      BROWSER: "true",
     },
   });
 
@@ -83,108 +86,111 @@ export async function login(opts: {
   let urlSent = false;
   let stderrTail = "";
 
-  const result = await new Promise<LoginResult>((resolve, reject) => {
-    let settled = false;
-    const done = (fn: () => void) => {
-      if (settled) return;
-      settled = true;
-      fn();
-    };
+  try {
+    return await new Promise<LoginResult>((resolve, reject) => {
+      let settled = false;
+      const done = (fn: () => void) => {
+        if (settled) return;
+        settled = true;
+        fn();
+      };
 
-    const timer = setTimeout(
-      () => done(() => reject(new Error(`Sign-in timed out after ${Math.round(timeoutMs / 1000)}s.`))),
-      timeoutMs,
-    );
-
-    // Poll for the token file: the harness writes it after the callback.
-    const poll = setInterval(() => {
-      if (Date.now() > deadline) return;
-      if (!existsSync(tokenPath)) return;
-      try {
-        const token = JSON.parse(readFileSync(tokenPath, "utf8"));
-        if (!token?.refresh_token) return;
-        // Give the harness a moment to finish its own bookkeeping.
-        setTimeout(() => {
-          void (async () => {
-            try {
-              const ident = await identify(token);
-              clearTimeout(timer);
-              done(() => resolve({ acpToken: token, ...ident }));
-            } catch (err) {
-              clearTimeout(timer);
-              done(() => reject(err));
-            }
-          })();
-        }, 500);
-      } catch {
-        /* file mid-write; try again */
-      }
-    }, 400);
-
-    const cleanupIntervals = () => clearInterval(poll);
-
-    child.stderr?.on("data", (buf: Buffer) => {
-      const text = buf.toString();
-      stderrTail = (stderrTail + text).slice(-4000);
-      for (const line of text.split("\n")) {
-        if (!line.includes(AUTH_URL_PREFIX)) continue;
-        const url = line.slice(line.indexOf(AUTH_URL_PREFIX) + AUTH_URL_PREFIX.length).trim();
-        if (urlSent) continue;
-        urlSent = true;
-        opts.onUrl?.(url);
-        opts.openUrl?.(url);
-      }
-    });
-
-    child.stdout?.on("data", (buf: Buffer) => {
-      for (const line of buf.toString().split("\n")) {
-        if (!line.startsWith("{")) continue;
-        try {
-          const msg = JSON.parse(line);
-          if (msg.id === 1 && msg.result?.authMethods) {
-            // initialize answered: start Google sign-in.
-            send({ jsonrpc: "2.0", id: 2, method: "authenticate", params: { methodId: "oauth-personal" } });
-          }
-          if (msg.id === 2 && msg.error) {
-            clearTimeout(timer);
-            cleanupIntervals();
-            done(() => reject(new Error(`Sign-in failed: ${JSON.stringify(msg.error).slice(0, 300)}`)));
-          }
-        } catch {
-          /* not a JSON-RPC line */
-        }
-      }
-    });
-
-    child.on("exit", (code) => {
-      cleanupIntervals();
-      if (existsSync(tokenPath)) {
-        // Token landed; the poll will resolve. Don't reject on exit.
-        log(`harness exited (${code}) after writing credentials`);
-        return;
-      }
-      clearTimeout(timer);
-      done(() =>
-        reject(
-          new Error(
-            `The sign-in harness exited (code ${code}) without writing credentials.\n` +
-              (stderrTail ? `Last output:\n${stderrTail}` : ""),
-          ),
-        ),
+      const timer = setTimeout(
+        () => done(() => reject(new Error(`Sign-in timed out after ${Math.round(timeoutMs / 1000)}s.`))),
+        timeoutMs,
       );
+
+      // Poll for the token file: the harness writes it after the callback.
+      const poll = setInterval(() => {
+        if (Date.now() > deadline) return;
+        if (!existsSync(tokenPath)) return;
+        try {
+          const token = JSON.parse(readFileSync(tokenPath, "utf8"));
+          if (!token?.refresh_token) return;
+          // Give the harness a moment to finish its own bookkeeping.
+          setTimeout(() => {
+            void (async () => {
+              try {
+                const ident = await identify(token);
+                clearTimeout(timer);
+                done(() => resolve({ acpToken: token, ...ident }));
+              } catch (err) {
+                clearTimeout(timer);
+                done(() => reject(err));
+              }
+            })();
+          }, 500);
+        } catch {
+          /* file mid-write; try again */
+        }
+      }, 400);
+
+      const cleanupIntervals = () => clearInterval(poll);
+
+      child.stderr?.on("data", (buf: Buffer) => {
+        const text = buf.toString();
+        stderrTail = (stderrTail + text).slice(-4000);
+        for (const line of text.split("\n")) {
+          if (!line.includes(AUTH_URL_PREFIX)) continue;
+          const url = line.slice(line.indexOf(AUTH_URL_PREFIX) + AUTH_URL_PREFIX.length).trim();
+          if (urlSent) continue;
+          urlSent = true;
+          opts.onUrl?.(url);
+          opts.openUrl?.(url);
+        }
+      });
+
+      child.stdout?.on("data", (buf: Buffer) => {
+        for (const line of buf.toString().split("\n")) {
+          if (!line.startsWith("{")) continue;
+          try {
+            const msg = JSON.parse(line);
+            if (msg.id === 1 && msg.result?.authMethods) {
+              // initialize answered: start Google sign-in.
+              send({ jsonrpc: "2.0", id: 2, method: "authenticate", params: { methodId: "oauth-personal" } });
+            }
+            if (msg.id === 2 && msg.error) {
+              clearTimeout(timer);
+              cleanupIntervals();
+              done(() => reject(new Error(`Sign-in failed: ${JSON.stringify(msg.error).slice(0, 300)}`)));
+            }
+          } catch {
+            /* not a JSON-RPC line */
+          }
+        }
+      });
+
+      child.on("exit", (code) => {
+        cleanupIntervals();
+        if (existsSync(tokenPath)) {
+          // Token landed; the poll will resolve. Don't reject on exit.
+          log(`harness exited (${code}) after writing credentials`);
+          return;
+        }
+        clearTimeout(timer);
+        done(() =>
+          reject(
+            new Error(
+              `The sign-in harness exited (code ${code}) without writing credentials.\n` +
+                (stderrTail ? `Last output:\n${stderrTail}` : ""),
+            ),
+          ),
+        );
+      });
+
+      child.on("error", (err) => {
+        clearTimeout(timer);
+        cleanupIntervals();
+        done(() => reject(err));
+      });
+
+      send({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 1, clientCapabilities: {} } });
     });
-
-    child.on("error", (err) => {
-      clearTimeout(timer);
-      cleanupIntervals();
-      done(() => reject(err));
-    });
-
-    send({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 1, clientCapabilities: {} } });
-  });
-
-  finish();
-  return result;
+  } finally {
+    // On every path, including timeout and errors: no orphaned harness, and
+    // no temp profile left holding a credential.
+    finish();
+  }
 }
 
 /** Ask Google who the token belongs to, what it may do, and the plan it is on. */

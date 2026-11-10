@@ -197,8 +197,7 @@ function cmdAdd(args: Args) {
   const openBrowser = Boolean(args.flags.browser) && !args.flags["no-browser"];
   const timeoutMs = Number(args.flags.timeout ?? 300) * 1000;
 
-  console.log("Starting Google sign-in…");
-  console.log("Approve in the browser window for the account you want to add.\n");
+  console.log("Starting Google sign-in…\n");
 
   return login({
     timeoutMs,
