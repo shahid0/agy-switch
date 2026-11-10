@@ -1,0 +1,14 @@
+{
+  "name": "agy-switch",
+  "version": "0.1.0",
+  "description": "Explicit Antigravity account switcher for the agy CLI and the T3 ACP provider. Agent-readable CLI.",
+  "type": "module",
+  "bin": {
+    "agy-switch": "./bin/agy-switch.js"
+  },
+  "scripts": {
+    "start": "bun run src/cli.ts"
+  },
+  "license": "MIT",
+  "private": true
+}
