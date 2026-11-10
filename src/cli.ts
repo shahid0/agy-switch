@@ -219,21 +219,32 @@ function cmdCurrent({ flags }: Parsed) {
   ]);
 }
 
-function cmdList({ flags }: Parsed) {
+async function cmdList({ flags }: Parsed) {
   const accounts = readAccounts();
+  if (accounts.length === 0) {
+    return flags.json ? printJson([]) : console.log("No saved accounts yet. Add one with: agy-switch add");
+  }
+
+  // Live, like pick: a snapshot hours old reads as fact and gets repeated.
+  const live = await readLiveQuota(accounts);
   const active = activeAccounts(accounts);
-  const rows = accounts.map((a, i) => ({
-    index: i + 1,
-    email: a.email,
-    name: a.name,
-    canRunAgents: canRunAgents(a),
-    missingScopes: missingScopes(a).map(scopeLabel),
-    active: { t3: active.t3 === a.email, agy: active.agy === a.email },
-    quota: a.quota?.models?.length ? { ...tightest(a.quota.models)!, checkedAt: a.quotaCheckedAt ?? null } : null,
-    lastUsedAt: a.lastUsedAt,
-  }));
+  const rows = accounts.map((a, i) => {
+    const r = live.get(a.id)!;
+    const headroom = tightest("groups" in r ? r.groups.flatMap((g) => g.buckets) : (a.quota?.models ?? []));
+    return {
+      index: i + 1,
+      email: a.email,
+      name: a.name,
+      canRunAgents: canRunAgents(a),
+      missingScopes: missingScopes(a).map(scopeLabel),
+      active: { t3: active.t3 === a.email, agy: active.agy === a.email },
+      quota: headroom ? { left: headroom.left, limitedBy: headroom.limitedBy, resetsAt: headroom.resetsAt } : null,
+      // When Google can't be read, quota is the last snapshot and says how old it is.
+      ...("error" in r ? { quotaError: r.error, quotaCheckedAt: a.quotaCheckedAt ?? null } : {}),
+      lastUsedAt: a.lastUsedAt,
+    };
+  });
   if (flags.json) return printJson(rows);
-  if (rows.length === 0) return console.log("No saved accounts yet. Add one with: agy-switch add");
 
   table([
     ["#", "EMAIL", "NAME", "QUOTA LEFT", "CAN RUN AGENTS", "IN USE BY"],
@@ -241,17 +252,20 @@ function cmdList({ flags }: Parsed) {
       String(r.index),
       r.email,
       r.name,
-      r.quota ? `${r.quota.left}%` : "not read yet",
+      !r.quota
+        ? "unknown"
+        : "quotaError" in r
+          ? `${r.quota.left}%, ${r.quotaCheckedAt ? `${span(r.quotaCheckedAt)} old` : "old"}`
+          : `${r.quota.left}%`,
       r.canRunAgents ? "yes" : `no, missing ${r.missingScopes.join(", ")}`,
       [r.active.t3 && "T3 Code", r.active.agy && "agy CLI"].filter(Boolean).join(", "),
     ]),
   ]);
-  const oldest = accounts.map((a) => a.quotaCheckedAt).filter((t): t is string => Boolean(t)).sort()[0];
-  console.log(
-    oldest
-      ? `\nQuota left shows each account's tightest limit, last read ${span(oldest)} ago. For live numbers: agy-switch quota`
-      : "\nFor quota, run: agy-switch quota",
-  );
+  const failed = rows.filter((r) => "quotaError" in r);
+  console.log("\nQuota left is each account's tightest limit, read live from Google.");
+  if (failed.length > 0) {
+    console.log(`Couldn't read live quota for ${plural(failed.length, "account")}: ${failed[0].quotaError}`);
+  }
 }
 
 async function cmdPick({ flags }: Parsed) {
@@ -393,7 +407,8 @@ function cmdSwitch({ args, flags }: Parsed) {
   if (targets.includes("t3") && missing.length > 0) {
     throw new CliError(
       `${account.email} can't run agents in T3 Code: its sign-in is missing ${permissionText(missing)}. ` +
-        "Nothing was changed. To fix it, run agy-switch add and approve every permission for this account.",
+        "Nothing was changed. To fix it, run agy-switch add and approve every permission for this account. " +
+        "To see the accounts that can, run: agy-switch pick",
       2,
       "cannot_run_agents",
       { missingScopes: missing },

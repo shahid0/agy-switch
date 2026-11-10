@@ -37,7 +37,7 @@ agy-switch switch ben@example.com    # make T3 Code use this account
 | Command | What it does |
 | :-- | :-- |
 | `current` | Shows which account T3 Code and the agy CLI use now |
-| `list` | Lists saved accounts, quota left as of the last read, and which can run agents |
+| `list` | Lists saved accounts, their live quota left, and which can run agents |
 | `pick [--for <model>] [--all]` | Ranks accounts by live quota left. Doesn't switch |
 | `quota [<account>]` | Reads live quota for one account, or all of them |
 | `switch <account> [--target t3\|agy\|both]` | Makes T3 Code use the account, or the agy CLI, or both |

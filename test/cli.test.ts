@@ -91,7 +91,7 @@ describe("resolveAccount", () => {
   });
 });
 
-describe("switch", () => {
+describe("commands", () => {
   let home: string;
   let printed: string[];
   const t3File = () => join(home, ".t3/userdata/providers/antigravity/i1/antigravity-acp/acp_token.json");
@@ -150,6 +150,72 @@ describe("switch", () => {
     expect(JSON.parse(printed[0]).error).toMatchObject({
       code: "ambiguous",
       candidates: ["ana@example.com", "ana.personal@example.com"],
+    });
+  });
+
+  test("quota reads Google's model groups live and saves them", async () => {
+    spyOn(globalThis, "fetch").mockImplementation((async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/token")) return Response.json({ access_token: "at", expires_in: 3600 });
+      if (url.endsWith(":retrieveUserQuotaSummary")) {
+        return Response.json({
+          groups: [
+            {
+              displayName: "Claude and GPT models",
+              description: "Models within this group: Claude Opus, Claude Sonnet, GPT-OSS",
+              buckets: [
+                { bucketId: "3p-weekly", window: "weekly", remainingFraction: 0.95, resetTime: "2026-11-16T09:00:00Z" },
+                { bucketId: "3p-5h", window: "5h", remainingFraction: 0.9, resetTime: "2026-11-10T11:00:00Z" },
+              ],
+            },
+          ],
+        });
+      }
+      throw new Error(`unexpected request to ${url}`);
+    }) as typeof fetch);
+
+    await main(["quota", "ana", "--json"]);
+    expect(JSON.parse(printed[0])).toEqual([
+      {
+        email: "ana@example.com",
+        ok: true,
+        groups: [
+          {
+            name: "Claude and GPT models",
+            models: "Claude Opus, Claude Sonnet, GPT-OSS",
+            left: 90,
+            windows: [
+              { window: "weekly", left: 95, resetsAt: "2026-11-16T09:00:00Z" },
+              { window: "5h", left: 90, resetsAt: "2026-11-10T11:00:00Z" },
+            ],
+          },
+        ],
+      },
+    ]);
+    const saved = JSON.parse(readFileSync(join(home, ".agy-switch/accounts.json"), "utf8")).accounts[0];
+    expect(saved.quota.models.map((b: { name: string }) => b.name)).toEqual(["3p-weekly", "3p-5h"]);
+    expect(saved.quotaCheckedAt).toBeTruthy();
+  });
+
+  test("list falls back to the last snapshot, and says how old it is, when Google can't be reached", async () => {
+    const snapshot = { name: "3p-5h", percentage: 40, reset_time: "", group: "Claude and GPT models", window: "5h" };
+    writeFileSync(
+      join(home, ".agy-switch/accounts.json"),
+      JSON.stringify({
+        version: 1,
+        accounts: [account("ana", { quota: { models: [snapshot] }, quotaCheckedAt: "2026-11-10T00:00:00.000Z" })],
+      }),
+    );
+    spyOn(globalThis, "fetch").mockImplementation((async () => {
+      throw new TypeError("offline");
+    }) as unknown as typeof fetch);
+
+    await main(["list", "--json"]);
+    expect(JSON.parse(printed[0])[0]).toMatchObject({
+      email: "ana@example.com",
+      quota: { left: 40, limitedBy: "Claude and GPT models, 5h" },
+      quotaError: "Couldn't reach Google. Check your internet connection.",
+      quotaCheckedAt: "2026-11-10T00:00:00.000Z",
     });
   });
 });

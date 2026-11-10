@@ -23,7 +23,7 @@ terminal, the JSON comes on one line.
 | See quota on every account | `agy-switch quota --json` |
 | Switch T3 Code | `agy-switch switch <email> --json` |
 | Switch T3 Code and the agy CLI | `agy-switch switch <email> --target both --json` |
-| List saved accounts, as of the last quota read | `agy-switch list --json` |
+| List saved accounts with live quota | `agy-switch list --json` |
 
 An account can also be given as the start of its email, its name, or its number
 in `list`. Prefer the full email: it can't match two accounts.
@@ -151,8 +151,6 @@ different account without saying so.
 - **That a switch reaches running sessions.** T3 Code reads the credential when
   it starts the Antigravity provider, and an `agy` session keeps the one it
   started with.
-- **That `list` is live.** It shows the last quota read. `pick` and `quota` read
-  live.
 - **That every account can run agents.** Check `canRunAgents`.
 - **That editing the files works the same.** Use the commands. The account file
   is written atomically, and a hand edit skips every check.
