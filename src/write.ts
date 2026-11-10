@@ -1,21 +1,39 @@
 import { execFile } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { agyTokenPath, t3AcpRoot } from "./paths.ts";
 import type { Account } from "./store.ts";
-import { existsSync as exists, readdirSync } from "node:fs";
-import { join } from "node:path";
 
 /** Every T3 ACP provider token file on this machine. */
 export function findAcpTokenPaths(): string[] {
   const root = t3AcpRoot();
-  if (!exists(root)) return [];
-  const out: string[] = [];
-  for (const instance of readdirSync(root)) {
-    const path = join(root, instance, "antigravity-acp", "acp_token.json");
-    if (exists(path)) out.push(path);
+  if (!existsSync(root)) return [];
+  return readdirSync(root)
+    .map((instance) => join(root, instance, "antigravity-acp", "acp_token.json"))
+    .filter((path) => existsSync(path));
+}
+
+function readJson<T>(path: string): T | null {
+  try {
+    return JSON.parse(readFileSync(path, "utf8")) as T;
+  } catch {
+    return null;
   }
-  return out;
+}
+
+/**
+ * Which saved account T3 Code and the agy CLI use now, matched by refresh
+ * token. null means no file, or a credential that isn't a saved account.
+ */
+export function activeAccounts(accounts: Account[]): { t3: string | null; agy: string | null } {
+  const owner = (token: string | undefined) =>
+    (token && accounts.find((a) => a.acpToken.refresh_token === token)?.email) || null;
+  const t3 =
+    findAcpTokenPaths()
+      .map((path) => owner(readJson<{ refresh_token?: string }>(path)?.refresh_token))
+      .find(Boolean) ?? null;
+  const agy = owner(readJson<{ token?: { refresh_token?: string } }>(agyTokenPath())?.token?.refresh_token);
+  return { t3, agy };
 }
 
 function backupOnce(path: string) {
@@ -24,27 +42,22 @@ function backupOnce(path: string) {
   if (!existsSync(bak)) writeFileSync(bak, readFileSync(path), { mode: 0o600 });
 }
 
-/** Write the account's credential to T3's ACP provider. */
-export function writeAcp(account: Account): string[] {
-  const written: string[] = [];
-  for (const path of findAcpTokenPaths()) {
+/** Write the account's credential to T3's ACP provider token files. */
+export function writeAcp(account: Account, paths: string[]): void {
+  for (const path of paths) {
     backupOnce(path);
     writeFileSync(path, JSON.stringify(account.acpToken, null, 2), { mode: 0o600 });
     chmodSync(path, 0o600);
-    written.push(path);
   }
-  return written;
 }
 
 /** Write the account's credential to the `agy` CLI token file. */
-export function writeAgy(account: Account): string {
+export function writeAgy(account: Account): void {
   const path = agyTokenPath();
   backupOnce(path);
   mkdirSync(dirname(path), { recursive: true });
 
-  const existing = existsSync(path)
-    ? (JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>)
-    : {};
+  const existing = readJson<Record<string, unknown>>(path) ?? {};
 
   writeFileSync(
     path,
@@ -66,28 +79,6 @@ export function writeAgy(account: Account): string {
     { mode: 0o600 },
   );
   chmodSync(path, 0o600);
-  return path;
-}
-
-/**
- * Resolve which stored account matches a credential file, by refresh token.
- * Google rotates refresh tokens, so a byte comparison can miss; callers that
- * need certainty should compare emails instead.
- */
-export function matchByRefreshToken(
-  accounts: Account[],
-  refreshToken: string | undefined,
-): Account | null {
-  if (!refreshToken) return null;
-  return accounts.find((a) => a.acpToken.refresh_token === refreshToken) ?? null;
-}
-
-export function readAcpTokenFile(path: string): { refresh_token?: string; project_id?: string } | null {
-  try {
-    return JSON.parse(readFileSync(path, "utf8"));
-  } catch {
-    return null;
-  }
 }
 
 /** Open a URL in the user's default browser. */

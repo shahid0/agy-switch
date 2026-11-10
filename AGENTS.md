@@ -1,216 +1,167 @@
-# What this is
+# agy-switch for AI agents
 
-`agy-switch` manages Google Antigravity accounts for **T3 Code's ACP provider**
-(and, optionally, the `agy` CLI). It exists because switching accounts by hand
-means re-authorising in a browser and copying token files between paths — slow,
-error-prone, and impossible to do when you're not at the machine.
+agy-switch switches the Google Antigravity account that T3 Code uses, and the
+`agy` CLI if asked. You read the state, the user decides, and you switch only
+when they ask.
 
-It is the plumbing an agent needs to answer three questions and act on them:
+## The one rule
 
-1. Which accounts do I have, and which one is active right now?
-2. Which account has headroom for the work I'm about to do?
-3. Make account X active, and tell me what changed.
-
-It has its own account store, its own sign-in, and reads quota straight from
-Google. It does not depend on any other Antigravity app.
-
----
-
-## The one rule that matters
-
-**This tool never switches on its own.** There is no timer, no daemon, no polling
-loop, no automatic failover. It reports state and executes an explicit
-`switch <who>` you (or the agent) chooses. The decision belongs to the caller.
-
-If you are an agent reading this: **do not** invent a rotation loop around it.
-The expected pattern is *read → decide → switch*, with the decision made
-deliberately, not on a schedule.
-
----
-
-## Critical background: `aicode`
-
-Google grants an OAuth scope called `https://www.googleapis.com/auth/aicode` at
-**consent time only**. It is the entitlement that lets an account drive
-Antigravity at all.
-
-Without it, the ACP harness fails with `invalid_scope` and falls back to an
-interactive browser login. The account still looks fine — quota reads work,
-models list works — and it simply cannot be used to run an agent.
-
-The consequences you must respect:
-
-- **The `scopes` array inside a token file is decorative.** Google validates
-  against what you actually consented to. Editing that array achieves nothing.
-- **Accounts authorised by other tools are often ineligible**, because those
-  tools never requested `aicode`.
-- **Only `agy-switch add` fixes it**, because it runs a real sign-in requesting
-  that scope.
-- **An account must be added by a human approving a browser prompt.** No command
-  can mint the grant.
-
-`agy-switch list` reports `ACP: yes` or `ACP: no (missing …)` per account. Trust
-that column, never your assumption.
-
----
+**Never switch on your own.** Switch only when the user asks you to. If they
+only mention a limit, report the quota and recommend an account. Don't build a
+loop, a timer or automatic failover around this tool.
 
 ## Commands
 
-Every command supports `--json` except `remove` and `help`.
+Add `--json` to any command except `help` and `agent`. When the output isn't a
+terminal, the JSON comes on one line.
 
-| Command | What it gives you |
-| :--- | :--- |
-| `agy-switch list --json` | every account, quota, eligibility, active flags |
-| `agy-switch current --json` | which stored account each surface holds |
-| `agy-switch pick --json` | ranked candidates, best first — a query, not a decision |
-| `agy-switch quota [<who>] --json` | fresh quota read from Google |
-| `agy-switch switch <who> --json` | make an account active, report what changed |
-| `agy-switch add [--browser]` | interactive sign-in; needs a human |
-| `agy-switch remove <who>` | delete from the store |
-| `agy-switch doctor --json` | environment checks |
+| To | Run |
+| :-- | :-- |
+| See which account each app uses | `agy-switch current --json` |
+| Find the account with the most quota | `agy-switch pick --json` |
+| Find the account with the most quota on one model | `agy-switch pick --for claude --json` |
+| See quota on every account | `agy-switch quota --json` |
+| Switch T3 Code | `agy-switch switch <email> --json` |
+| Switch T3 Code and the agy CLI | `agy-switch switch <email> --target both --json` |
+| List saved accounts, as of the last quota read | `agy-switch list --json` |
 
-`<who>` accepts an email, an email prefix, a display name, an account id, or a
-1-based position from `list`.
+An account can also be given as the start of its email, its name, or its number
+in `list`. Prefer the full email: it can't match two accounts.
 
-### Exit codes
-
-| Code | Meaning | What an agent should do |
-| :--- | :--- | :--- |
-| 0 | success | continue |
-| 1 | runtime error (sign-in failed, quota unreachable, harness missing) | report it; don't retry blindly |
-| 2 | usage error (bad flag, unknown/ambiguous account, **not ACP-eligible**) | fix the input or choose another account |
-
----
-
-## The three jobs, concretely
-
-### Job 1 — "who am I running as right now?"
+## Which account is in use?
 
 ```sh
-agy-switch current --json
+$ agy-switch current --json
+{"t3": "dev@example.com", "agy": null}
 ```
 
-```json
-{
-  "acp": "work@example.com",
-  "agy": null
-}
-```
+`null` means that app isn't using any saved account.
 
-Use this before attributing work to an account, or when the user asks "which
-account is this?".
-
-### Job 2 — "which account should I switch to?"
+## Which account has the most quota?
 
 ```sh
-agy-switch pick --json
-```
-
-```json
+$ agy-switch pick --json
 {
-  "rankedBy": "worst remaining quota",
+  "rankedBy": "tightest limit across all model groups",
   "candidates": [
     {
-      "index": 1,
-      "id": "…",
-      "email": "personal@example.com",
-      "name": "personal",
-      "score": 100,
-      "acpEligible": true,
-      "missingScopes": [],
-      "excluded": null
+      "email": "ben@example.com",
+      "name": "Ben",
+      "quotaLeft": 75,
+      "limitedBy": "Claude and GPT models, 5h",
+      "resetsAt": "2026-11-10T14:12:00Z",
+      "active": {"t3": false, "agy": false},
+      "lastUsedAt": "2026-11-07T09:00:00.000Z"
     }
   ],
-  "hint": "call `agy-switch switch <email> --json` to apply your choice"
+  "next": "agy-switch switch <email> --json"
 }
 ```
 
-`pick` excludes ineligible accounts and sorts best-first. It **returns options
-and stops** — it never applies anything. Weigh the candidates yourself (quota,
-reset time, `lastUsedAt`, or which account the user named) and then call
-`switch`.
+- `pick` reads quota live from Google and ranks best first. It never switches.
+- It leaves out accounts that can't run agents. `--all` includes them.
+- Google limits each model group over a 5-hour window and a weekly one.
+  `quotaLeft` is the percent left on the tightest of them, `limitedBy` names
+  it, and `resetsAt` says when it refills.
+- `--for <model>` ranks by one model group. It understands names like `claude`,
+  `gpt`, `gemini`, `"Gemini 3 Pro"` and `argon`. Claude and GPT models share one
+  group.
+- `quotaLeft: null` with a `quotaError` means Google couldn't be read for that
+  account.
 
-Use `--for <model>` to rank by one specific model's headroom instead of the worst
-across all models. Use `--include-ineligible` only when you're diagnosing why an
-account is missing from the list.
+Choose by what the user said first, such as an account or a model they named.
+Then quota, then `resetsAt`, then `lastUsedAt`.
 
-### Job 3 — "switch to it"
+## Switch
 
 ```sh
-agy-switch switch personal --json
-```
-
-```json
+$ agy-switch switch ben@example.com --json
 {
-  "switchedTo": "personal@example.com",
-  "id": "…",
-  "target": "acp",
-  "acpPaths": ["/Users/…/antigravity-acp/acp_token.json"]
+  "switchedTo": "ben@example.com",
+  "target": "t3",
+  "previous": {"t3": "dev@example.com"},
+  "note": "Sessions already running keep the account they started with."
 }
 ```
 
-Default target is `acp`. Add `--target agy` or `--target both` to also write the
-`agy` CLI credential.
+- The default target is `t3`, which is T3 Code. `--target agy` switches the agy
+  CLI, and `--target both` switches both.
+- `switch` refuses an account that can't run agents in T3 Code before it writes
+  anything.
 
-**`switch` refuses an ineligible account** with exit code 2, before writing
-anything, so a working session is never broken by a bad choice.
+Then tell the user which account is now in use, which app changed and what it
+used before (`previous`), and the note.
 
----
-
-## When quota might be stale
-
-`pick` and `list` rank on the **last quota snapshot in the store**, which may be
-minutes or hours old. If accuracy matters — you're about to run something long,
-or an account may have been used since — refresh first:
+## How much quota does each account have?
 
 ```sh
-agy-switch quota --json     # live reads from Google, updates the store
-agy-switch pick --json      # now ranking on fresh numbers
+$ agy-switch quota --json
+[
+  {
+    "email": "ana@example.com",
+    "ok": true,
+    "groups": [
+      {
+        "name": "Claude and GPT models",
+        "models": "Claude Opus, Claude Sonnet, GPT-OSS",
+        "left": 90,
+        "windows": [
+          {"window": "weekly", "left": 95, "resetsAt": "2026-11-16T09:00:00Z"},
+          {"window": "5h", "left": 90, "resetsAt": "2026-11-10T11:00:00Z"}
+        ]
+      }
+    ]
+  }
+]
 ```
 
-Skipping this is the most likely way an agent picks an account that is actually
-exhausted.
+A group's `left` is its tightest window. Use this for questions like "how much
+Claude quota is left?". It changes nothing.
 
----
+## Accounts that can't run agents
 
-## What to report back to the user
+Google grants the `aicode` permission only at sign-in, and Antigravity needs it
+to run agents. An account signed in without it still shows quota and models,
+but T3 Code can't use it. `list` and `pick --all` show `canRunAgents: false` and
+`missingScopes: ["aicode"]`.
 
-After a switch, say what changed, not just "done":
+Only `agy-switch add` fixes this: the user signs in again in a browser and
+approves every permission. No command can do that for them, so tell the user
+instead of retrying.
 
-- the account now active
-- which surface(s) were written (`acp`, `agy`, or both)
-- any caveat that applies — e.g. a running `agy` session keeps its old
-  credential until restarted
+## Errors
 
-After a failure, quote the exit code and the message. Do not silently retry a
-code 1; do not paper over a code 2 by picking a different account without saying
-so.
+With `--json`, a failure prints `{"error": {"code": "…", "message": "…"}}` on
+stdout. Without it, the message goes to stderr.
 
----
+| Exit | `code` | What to do |
+| :-: | :-- | :-- |
+| 2 | `ambiguous` | `candidates` lists the matches. Ask the user which one they mean |
+| 2 | `not_found` | Run `list` and check the account |
+| 2 | `cannot_run_agents` | Tell the user the account needs `agy-switch add`. Don't quietly pick another one |
+| 2 | `no_match` | `--for` matched no model group. `groups` lists them |
+| 2 | `usage`, `no_accounts`, `none_can_run_agents` | Fix the command, or tell the user to add an account |
+| 1 | `failed`, `no_t3_signin`, `missing_permission` | Report the message. Don't retry blindly |
 
-## Things an agent must not assume
+Quote the message to the user. Never get around an error by switching to a
+different account without saying so.
 
-- **That editing files by hand is equivalent.** Use the commands. The store is
-  written atomically and the tool tracks eligibility; a hand-edit corrupts both.
-- **That all accounts are equivalent.** Check the `ACP` column.
-- **That a switch affects sessions already running.** T3 reads the credential
-  when it spawns the provider; an `agy` session keeps the credential it started
-  with.
-- **That quota numbers are live.** See above.
-- **That you should switch when someone mentions a limit.** Unless the user asked
-  you to move accounts, don't. Report, recommend, wait.
+## Don't assume
 
----
+- **That a switch reaches running sessions.** T3 Code reads the credential when
+  it starts the Antigravity provider, and an `agy` session keeps the one it
+  started with.
+- **That `list` is live.** It shows the last quota read. `pick` and `quota` read
+  live.
+- **That every account can run agents.** Check `canRunAgents`.
+- **That editing the files works the same.** Use the commands. The account file
+  is written atomically, and a hand edit skips every check.
 
-## Environment
+## Files
 
 | What | Where |
-| :--- | :--- |
-| account store | `~/.agy-switch/accounts.json` (mode `0600`, atomic writes) |
-| T3 ACP target | `~/.t3/userdata/providers/antigravity/*/antigravity-acp/acp_token.json` |
-| `agy` CLI target | `~/.gemini/antigravity-cli/antigravity-oauth-token` |
-| sign-in harness | bundled with T3 Code; override with `AGY_SWITCH_HARNESS` |
-
-If `agy-switch doctor` reports the harness missing, `add` cannot work — the user
-needs T3 Code installed once, or `AGY_SWITCH_HARNESS` pointed at an
-`agy_acp_server.par`.
+| :-- | :-- |
+| Saved accounts | `~/.agy-switch/accounts.json`, mode 0600 |
+| T3 Code sign-in | `~/.t3/userdata/providers/antigravity/*/antigravity-acp/acp_token.json` |
+| agy CLI sign-in | `~/.gemini/antigravity-cli/antigravity-oauth-token` |
+| What `add` signs in with | The Antigravity server bundled with T3 Code, or the file in `AGY_SWITCH_HARNESS` |

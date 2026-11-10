@@ -1,14 +1,24 @@
 {
   "name": "agy-switch",
   "version": "0.1.0",
-  "description": "Explicit Antigravity account switcher for the agy CLI and the T3 ACP provider. Agent-readable CLI.",
+  "description": "Switch the Google Antigravity account that T3 Code and the agy CLI use. Built for people and AI agents.",
   "type": "module",
   "bin": {
     "agy-switch": "./bin/agy-switch.js"
   },
   "scripts": {
-    "start": "bun run src/cli.ts"
+    "start": "bun bin/agy-switch.js",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shahid0/agy-switch.git"
   },
   "license": "MIT",
-  "private": true
+  "private": true,
+  "devDependencies": {
+    "@types/bun": "^1.4.4",
+    "typescript": "^7.0.2"
+  }
 }

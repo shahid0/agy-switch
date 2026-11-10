@@ -19,7 +19,6 @@ export type LoginResult = {
   expiresAt: number;
   email: string;
   name: string;
-  subscription: { id: string; name: string } | null;
 };
 
 const AUTH_URL_PREFIX = "Open the following link to authenticate the ACP server: ";
@@ -32,21 +31,18 @@ const AUTH_URL_PREFIX = "Open the following link to authenticate the ACP server:
  * GEMINI_HOME, surface the authorize URL, and read the token it produces.
  */
 export async function login(opts: {
-  openUrl?: (url: string) => void;
   timeoutMs?: number;
   onUrl?: (url: string) => void;
-  log?: (line: string) => void;
 } = {}): Promise<LoginResult> {
   const binary = harnessBinary();
   if (!binary) {
     throw new Error(
-      "The Antigravity ACP harness is not installed.\n" +
-        "It ships with T3 Code. Install T3 Code once, or point AGY_SWITCH_HARNESS at an agy_acp_server.par.",
+      "Can't start sign-in: the Antigravity server that ships with T3 Code isn't installed. " +
+        "Install T3 Code and use Antigravity in it once, or set AGY_SWITCH_HARNESS to an agy_acp_server.par file.",
     );
   }
 
   const timeoutMs = opts.timeoutMs ?? 5 * 60_000;
-  const log = opts.log ?? (() => {});
 
   // Isolated profile: the harness refuses to start without settings.json.
   const profile = mkdtempSync(join(tmpdir(), "agy-switch-login-"));
@@ -96,7 +92,10 @@ export async function login(opts: {
       };
 
       const timer = setTimeout(
-        () => done(() => reject(new Error(`Sign-in timed out after ${Math.round(timeoutMs / 1000)}s.`))),
+        () =>
+          done(() =>
+            reject(new Error(`Sign-in timed out after ${Math.round(timeoutMs / 1000)} seconds. Nothing was saved.`)),
+          ),
         timeoutMs,
       );
 
@@ -136,7 +135,6 @@ export async function login(opts: {
           if (urlSent) continue;
           urlSent = true;
           opts.onUrl?.(url);
-          opts.openUrl?.(url);
         }
       });
 
@@ -152,7 +150,9 @@ export async function login(opts: {
             if (msg.id === 2 && msg.error) {
               clearTimeout(timer);
               cleanupIntervals();
-              done(() => reject(new Error(`Sign-in failed: ${JSON.stringify(msg.error).slice(0, 300)}`)));
+              done(() =>
+                reject(new Error(`Sign-in didn't finish. Nothing was saved. Details: ${JSON.stringify(msg.error).slice(0, 300)}`)),
+              );
             }
           } catch {
             /* not a JSON-RPC line */
@@ -162,17 +162,14 @@ export async function login(opts: {
 
       child.on("exit", (code) => {
         cleanupIntervals();
-        if (existsSync(tokenPath)) {
-          // Token landed; the poll will resolve. Don't reject on exit.
-          log(`harness exited (${code}) after writing credentials`);
-          return;
-        }
+        // Token landed; the poll will resolve. Don't reject on exit.
+        if (existsSync(tokenPath)) return;
         clearTimeout(timer);
         done(() =>
           reject(
             new Error(
-              `The sign-in harness exited (code ${code}) without writing credentials.\n` +
-                (stderrTail ? `Last output:\n${stderrTail}` : ""),
+              `The Antigravity server stopped before sign-in finished (exit code ${code}). Nothing was saved.` +
+                (stderrTail ? `\nIts last output:\n${stderrTail}` : ""),
             ),
           ),
         );
@@ -193,7 +190,7 @@ export async function login(opts: {
   }
 }
 
-/** Ask Google who the token belongs to, what it may do, and the plan it is on. */
+/** Ask Google who the token belongs to and what it may do. */
 async function identify(token: {
   client_id: string;
   client_secret: string;
@@ -211,7 +208,9 @@ async function identify(token: {
     }),
   });
   if (!res.ok) {
-    throw new Error(`Google rejected the new credential (HTTP ${res.status}): ${(await res.text()).slice(0, 300)}`);
+    throw new Error(
+      `Google didn't accept the new sign-in (HTTP ${res.status}). Nothing was saved. Details: ${(await res.text()).slice(0, 300)}`,
+    );
   }
   const grant = (await res.json()) as {
     access_token: string;
@@ -223,7 +222,7 @@ async function identify(token: {
   const info = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
     headers: { Authorization: `Bearer ${grant.access_token}` },
   });
-  if (!info.ok) throw new Error(`Could not read the account identity (HTTP ${info.status}).`);
+  if (!info.ok) throw new Error(`Couldn't tell which Google account signed in (HTTP ${info.status}). Nothing was saved.`);
   const who = (await info.json()) as { email?: string; name?: string };
 
   return {
@@ -233,6 +232,5 @@ async function identify(token: {
     expiresAt: Date.now() + Math.max(60, grant.expires_in - 60) * 1000,
     email: who.email ?? "",
     name: who.name ?? who.email ?? "",
-    subscription: null,
   };
 }

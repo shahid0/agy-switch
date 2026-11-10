@@ -9,6 +9,17 @@ export const REQUIRED_SCOPES = [
   "https://www.googleapis.com/auth/aicode",
 ] as const;
 
+/** One quota limit, e.g. the 5-hour window on Claude and GPT models. */
+export type QuotaBucket = {
+  name: string;
+  percentage: number;
+  reset_time: string;
+  /** Google's name for the models sharing this limit. */
+  group?: string;
+  /** "5h" or "weekly". */
+  window?: string;
+};
+
 export type Account = {
   id: string;
   email: string;
@@ -28,14 +39,8 @@ export type Account = {
   expiresAt?: number;
   /** Scopes Google actually granted. Authoritative; the token file's list is not. */
   grantedScopes: string[];
-  subscription?: { id: string; name: string } | null;
-  quota?: {
-    models?: Array<{ name: string; percentage: number; reset_time: string }>;
-    subscription_tier?: string;
-    is_forbidden?: boolean;
-  } | null;
+  quota?: { models: QuotaBucket[] } | null;
   quotaCheckedAt?: string | null;
-  disabled?: boolean;
   addedAt: string;
   lastUsedAt: string | null;
 };
@@ -45,17 +50,20 @@ type StoreFile = {
   accounts: Account[];
 };
 
-const EMPTY: StoreFile = { version: 1, accounts: [] };
-
 export function readStore(): StoreFile {
   const path = storePath();
-  if (!existsSync(path)) return { ...EMPTY, accounts: [] };
+  if (!existsSync(path)) return { version: 1, accounts: [] };
   try {
     const raw = JSON.parse(readFileSync(path, "utf8")) as Partial<StoreFile>;
-    if (!Array.isArray(raw.accounts)) return { ...EMPTY, accounts: [] };
-    return { version: 1, accounts: raw.accounts.filter((a) => a?.email && a?.acpToken) };
+    if (!Array.isArray(raw.accounts)) return { version: 1, accounts: [] };
+    return {
+      version: 1,
+      accounts: raw.accounts
+        .filter((a) => a?.email && a?.acpToken)
+        .map((a) => ({ ...a, name: a.name || a.email })),
+    };
   } catch {
-    return { ...EMPTY, accounts: [] };
+    return { version: 1, accounts: [] };
   }
 }
 
@@ -97,6 +105,18 @@ export function upsertAccount(account: Account): { account: Account; replaced: b
   return { account, replaced: false };
 }
 
+/** Record fresh quota for several accounts in one write, keyed by account id. */
+export function saveQuota(snapshots: Map<string, QuotaBucket[]>, checkedAt: string): void {
+  const store = readStore();
+  for (const account of store.accounts) {
+    const buckets = snapshots.get(account.id);
+    if (!buckets) continue;
+    account.quota = { models: buckets };
+    account.quotaCheckedAt = checkedAt;
+  }
+  writeStore(store);
+}
+
 export function markUsed(id: string): void {
   const store = readStore();
   const account = store.accounts.find((a) => a.id === id);
@@ -105,27 +125,22 @@ export function markUsed(id: string): void {
   writeStore(store);
 }
 
-export function removeAccount(ref: string): Account | null {
+export function removeAccount(id: string): Account | null {
   const store = readStore();
-  const index = store.accounts.findIndex(
-    (a) =>
-      a.id === ref ||
-      a.email.toLowerCase() === ref.toLowerCase() ||
-      (a.name ?? "").toLowerCase() === ref.toLowerCase(),
-  );
+  const index = store.accounts.findIndex((a) => a.id === id);
   if (index < 0) return null;
   const [removed] = store.accounts.splice(index, 1);
   writeStore(store);
   return removed;
 }
 
-/** Missing scopes for this account. Empty array means ACP-eligible. */
+/** Missing scopes for this account. Empty array means it can run agents. */
 export function missingScopes(account: Account): string[] {
   const granted = new Set(account.grantedScopes ?? []);
   return REQUIRED_SCOPES.filter((s) => !granted.has(s));
 }
 
-export function isAcpEligible(account: Account): boolean {
+export function canRunAgents(account: Account): boolean {
   return missingScopes(account).length === 0;
 }
 

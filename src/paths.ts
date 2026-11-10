@@ -10,6 +10,9 @@ export function home(): string {
   return process.env.HOME?.trim() || homedir();
 }
 
+/** A path with the home directory shown as ~, for messages. */
+export const tildify = (path: string) => (path.startsWith(home()) ? `~${path.slice(home().length)}` : path);
+
 /** This tool's own account store. Independent of any other Antigravity app. */
 export const storeDir = () => join(home(), ".agy-switch");
 export const storePath = () => join(storeDir(), "accounts.json");
