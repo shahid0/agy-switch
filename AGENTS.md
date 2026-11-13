@@ -1,14 +1,7 @@
 # agy-switch for AI agents
 
 agy-switch switches the Google Antigravity account that T3 Code uses, and the
-`agy` CLI if asked. You read the state, the user decides, and you switch only
-when they ask.
-
-## The one rule
-
-**Never switch on your own.** Switch only when the user asks you to. If they
-only mention a limit, report the quota and recommend an account. Don't build a
-loop, a timer or automatic failover around this tool.
+`agy` CLI if asked.
 
 ## Commands
 
