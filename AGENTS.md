@@ -7,14 +7,17 @@ overnight too, when an account runs low on quota.
 ## When to switch
 
 Switch on your own, without asking, whenever the account in use doesn't have
-the quota for the work you're about to do.
+the quota for the work you're about to do. You can switch in the middle of a
+batch: runs already going keep the old account, and every run you start after
+the switch uses the new one.
 
 1. Before a batch of runs, check the model group they use:
    `agy-switch pick --for <model> --json`.
 2. If the account in use (`active.t3: true`) can't cover the batch, switch to
    the best candidate before you start (see Switch).
-3. If a run still stops on a quota limit, switch and run it again.
-4. In your next message or report, say which account is in use now and what it
+3. If it runs low partway through, switch before you start the next run.
+4. If a run still stops on a quota limit, switch and run it again.
+5. In your next message or report, say which account is in use now and what it
    replaced.
 
 ## Commands
@@ -155,9 +158,9 @@ different account without saying so.
 
 ## Don't assume
 
-- **That a switch reaches running sessions.** T3 Code reads the credential when
-  it starts the Antigravity provider, and an `agy` session keeps the one it
-  started with.
+- **That a switch reaches runs already going.** They keep the account they
+  started with, and so does an `agy` session. Every run T3 Code starts after
+  the switch uses the new account.
 - **That every account can run agents.** Check `canRunAgents`.
 - **That editing the files works the same.** Use the commands. The account file
   is written atomically, and a hand edit skips every check.
