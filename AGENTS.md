@@ -6,10 +6,11 @@ overnight too, when an account runs low on quota.
 
 ## When to switch
 
-Switch on your own, without asking, whenever the account in use doesn't have
-the quota for the work you're about to do. You can switch in the middle of a
-batch: runs already going keep the old account, and every run you start after
-the switch uses the new one.
+Switch on your own, without asking, when the account in use doesn't have the
+quota for the work ahead.
+
+You can switch in the middle of a batch too. Sessions already running keep the
+account they started with. Sessions started after a switch use the new account.
 
 1. Before a batch of runs, check the model group they use:
    `agy-switch pick --for <model> --json`.
@@ -158,9 +159,9 @@ different account without saying so.
 
 ## Don't assume
 
-- **That a switch reaches runs already going.** They keep the account they
-  started with, and so does an `agy` session. Every run T3 Code starts after
-  the switch uses the new account.
+- **That a switch reaches sessions already running.** Sessions already running
+  keep the account they started with, in T3 Code and in the agy CLI. Sessions
+  started after a switch use the new account.
 - **That every account can run agents.** Check `canRunAgents`.
 - **That editing the files works the same.** Use the commands. The account file
   is written atomically, and a hand edit skips every check.

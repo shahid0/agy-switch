@@ -38,7 +38,8 @@ Commands
 Add --json for JSON output. It works with every command except help and agent.
 
 For AI agents
-  Switch only when the user asks you to. To move to the account with the most quota:
+  Switch on your own, without asking, when the account in use doesn't have the
+  quota for the work ahead. To move to the account with the most quota:
     agy-switch pick --json        (add --for claude or --for gemini for one model)
     agy-switch switch <email> --json
   More: agy-switch agent

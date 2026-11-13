@@ -7,7 +7,8 @@ you want, with one command. You can run it yourself or let an AI agent drive it.
 
 Switching by hand means signing in again in a browser and copying token files
 between folders. agy-switch keeps your accounts, reads their quota from Google,
-and switches when you tell it to. It never switches on its own.
+and switches with one command, so an agent can keep working, overnight too,
+when an account runs low.
 
 agy-switch isn't affiliated with Google or T3 Code.
 
@@ -52,12 +53,14 @@ agy-switch switch ben@example.com    # make T3 Code use this account
 ## Using it from an AI agent
 
 `agy-switch agent` prints a manual written for agents, the same text as
-[AGENTS.md](AGENTS.md). It covers the JSON each command returns, what each error
-code means, and what to tell the user. The short version:
+[AGENTS.md](AGENTS.md). It covers when to switch, the JSON each command returns,
+what each error code means, and what to tell the user. The short version:
+switch on your own, without asking, when the account in use doesn't have the
+quota for the work ahead.
 
 ```sh
 agy-switch pick --json               # live ranking, best first
-agy-switch switch <email> --json     # only when the user asks
+agy-switch switch <email> --json     # move to the best one
 ```
 
 ## Signing in

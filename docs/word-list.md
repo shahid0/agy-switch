@@ -55,8 +55,9 @@ Plain, exact, calm. Never cute, never alarmed, never salesy.
 
 | Rule | The line |
 | :-- | :-- |
-| When to switch | Switch only when the user asks you to. |
+| When to switch | Switch on your own, without asking, when the account in use doesn't have the quota for the work ahead. |
 | Running sessions | Sessions already running keep the account they started with. |
+| After a switch | Sessions started after a switch use the new account. |
 | Fixing an account | Run agy-switch add and approve every permission. |
 | Exit codes | 0 done, 1 something failed, 2 the command needs fixing. |
 
