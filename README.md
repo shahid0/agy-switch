@@ -42,6 +42,7 @@ agy-switch switch ben@example.com    # make T3 Code use this account
 | `pick [--for <model>] [--all]` | Ranks accounts by live quota left. Doesn't switch |
 | `quota [<account>]` | Reads live quota for one account, or all of them |
 | `switch <account> [--target t3\|agy\|both]` | Makes T3 Code use the account, or the agy CLI, or both |
+| `ran-out image [<account>] --resets-in <wait>` | Records that image generation ran out, which Google doesn't report. Default: the account T3 Code uses |
 | `add [--browser] [--timeout <seconds>]` | Signs in with Google and saves the account |
 | `remove <account>` | Deletes a saved account |
 | `doctor` | Checks your setup |
@@ -81,7 +82,10 @@ Google puts models that share limits in a group, and limits each group over a
 
 Image generation uses the Gemini Models limits and has one of its own, which
 Google doesn't report. So an image call can fail on quota while Gemini Models
-still has quota left.
+still has quota left. When an image call fails on quota, record it with
+`agy-switch ran-out image --resets-in <wait>`, then switch. `<wait>` is the time
+in the error, such as 4h57m19s. Until it resets, `pick --for image` ranks that
+account last.
 
 ## Signing in
 

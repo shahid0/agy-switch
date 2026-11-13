@@ -46,6 +46,7 @@ Plain, exact, calm. Never cute, never alarmed, never salesy.
 | add | Sign in and save an account | login |
 | remove | Delete a saved account | delete, rm (an alias only) |
 | pick | Rank accounts. Never switches | choose, best (an alias only) |
+| ran out | Record that image generation ran out on an account. Command: ran-out | exhausted, mark |
 
 ## Never name
 
@@ -61,6 +62,7 @@ Plain, exact, calm. Never cute, never alarmed, never salesy.
 | Running sessions | Sessions already running keep the account they started with. |
 | After a switch | Sessions started after a switch use the new account. |
 | Which quota to rank by | Rank by the quota your runs use: --for hydrogen for Hydrogen runs, --for argon for Argon runs, --for image for image generation, --for claude for Claude runs. |
+| After an image call fails on quota | When an image call fails on quota, record it with agy-switch ran-out image --resets-in <wait>, then switch. |
 | Fixing an account | Run agy-switch add and approve every permission. |
 | Exit codes | 0 done, 1 something failed, 2 the command needs fixing. |
 

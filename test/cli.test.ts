@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { main, parseArgs, resolveAccount } from "../src/cli.ts";
+import { main, parseArgs, parseWait, resolveAccount } from "../src/cli.ts";
 import type { Account } from "../src/store.ts";
 
 const SCOPES = [
@@ -101,6 +101,19 @@ describe("parseArgs", () => {
 
   test("rejects an unknown command", () => {
     expect(() => parseArgs(["swich"])).toThrow('Unknown command "swich".');
+  });
+});
+
+describe("parseWait", () => {
+  test("reads a wait the way Google's quotaResetDelay writes it", () => {
+    expect(parseWait("4h57m19s")).toBe(17_839_000);
+    expect(parseWait("4h57m19.813291527s")).toBeCloseTo(17_839_813.29, 1);
+    expect(parseWait("5h")).toBe(18_000_000);
+    expect(parseWait("90m")).toBe(5_400_000);
+  });
+
+  test("rejects anything else, and a wait of nothing", () => {
+    for (const text of ["", "soon", "4 hours", "500ms", "0s", "-1h"]) expect(parseWait(text)).toBeNull();
   });
 });
 
@@ -260,9 +273,54 @@ describe("commands", () => {
         sharesLimitsWith: "Gemini Models",
         left: null,
         windows: [],
-        note: "Google doesn't report image generation's own limit, so an image call can still fail on quota.",
+        note: expect.stringContaining("Google doesn't report image generation's own limit"),
       },
     ]);
+  });
+
+  test("ran-out image records the limit for the account T3 Code uses, and pick --for image ranks it last", async () => {
+    await main(["ran-out", "image", "--resets-in", "4h57m19.81s", "--json"]);
+    const recorded = JSON.parse(printed[0]);
+    expect(recorded).toMatchObject({ ranOut: "Image generation", account: "ana@example.com" });
+    expect(Date.parse(recorded.resetsAt) - Date.now()).toBeWithin(17_830_000, 17_840_000);
+
+    printed = [];
+    fakeGoogle({ ana: 0.6, ben: 0.2 });
+    await main(["pick", "--for", "image", "--json"]);
+    expect(JSON.parse(printed[0]).candidates.map((c: { email: string; quotaLeft: number; limitedBy: string; resetsAt: string }) => [c.email, c.quotaLeft, c.limitedBy, c.resetsAt])).toEqual([
+      ["ben@example.com", 20, "Gemini Models, 5h", "2026-11-13T12:30:00Z"],
+      ["ana@example.com", 0, "Image generation", recorded.resetsAt],
+    ]);
+
+    printed = [];
+    await main(["quota", "ana", "--json"]);
+    expect(JSON.parse(printed[0])[0].groups.at(-1)).toMatchObject({
+      name: "Image generation",
+      left: 0,
+      windows: [{ window: "own limit", left: 0, resetsAt: recorded.resetsAt }],
+    });
+  });
+
+  test("a recorded image limit stops counting once it resets", async () => {
+    const past = { resetsAt: "2026-01-01T00:00:00.000Z", recordedAt: "2025-12-31T19:00:00.000Z" };
+    writeFileSync(
+      join(home, ".agy-switch/accounts.json"),
+      JSON.stringify({ version: 1, accounts: [account("ana", { imageLimit: past }), account("ben")] }),
+    );
+    fakeGoogle({ ana: 0.6, ben: 0.2 });
+    await main(["pick", "--for", "image", "--json"]);
+    expect(JSON.parse(printed[0]).candidates.map((c: { email: string; quotaLeft: number }) => [c.email, c.quotaLeft])).toEqual([
+      ["ana@example.com", 60],
+      ["ben@example.com", 20],
+    ]);
+  });
+
+  test("ran-out records only image generation, and needs the wait", async () => {
+    await main(["ran-out", "claude", "--resets-in", "1h", "--json"]);
+    expect(process.exitCode).toBe(2);
+    expect(JSON.parse(printed[0]).error.code).toBe("usage");
+    await main(["ran-out", "image", "--resets-in", "soon", "--json"]);
+    expect(JSON.parse(printed[1]).error.message).toBe("--resets-in takes the wait from the failed call, such as --resets-in 4h57m19s.");
   });
 
   test("pick --for image ranks by the Gemini Models limits that image generation shares", async () => {

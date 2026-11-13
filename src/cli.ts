@@ -10,6 +10,7 @@ import {
   markUsed,
   missingScopes,
   readAccounts,
+  recordImageLimit,
   removeAccount,
   saveQuota,
   scopeLabel,
@@ -29,6 +30,9 @@ Commands
   quota [<account>]         Live quota for one account, or all of them
   switch <account> [--target t3|agy|both]
                             Use this account. Default target: t3 (T3 Code)
+  ran-out image [<account>] --resets-in <wait>
+                            Record that image generation ran out, which Google
+                            doesn't report. Default: the account T3 Code uses
   add [--browser]           Sign in with Google and save the account
   remove <account>          Delete a saved account
   doctor                    Check your setup
@@ -45,6 +49,8 @@ For AI agents
   Rank by the quota your runs use: --for hydrogen for Hydrogen runs,
   --for argon for Argon runs, --for image for image generation, --for claude
   for Claude runs.
+  When an image call fails on quota, record it with agy-switch ran-out image
+  --resets-in <wait>, then switch.
   More: agy-switch agent
 
 Exit codes: 0 done, 1 something failed (network, sign-in, setup),
@@ -74,6 +80,7 @@ const COMMANDS: Record<string, { flags: Record<string, "bool" | "value">; maxArg
   pick: { flags: { json: "bool", for: "value", all: "bool" }, maxArgs: 0 },
   quota: { flags: { json: "bool" }, maxArgs: 1 },
   switch: { flags: { json: "bool", target: "value" }, maxArgs: 1 },
+  "ran-out": { flags: { json: "bool", "resets-in": "value" }, maxArgs: 2 },
   add: { flags: { json: "bool", browser: "bool", "no-browser": "bool", timeout: "value" }, maxArgs: 0 },
   remove: { flags: { json: "bool" }, maxArgs: 1 },
   doctor: { flags: { json: "bool" }, maxArgs: 0 },
@@ -196,7 +203,10 @@ function tightest(buckets: QuotaBucket[]) {
   };
 }
 
-const IMAGE_NOTE = "Google doesn't report image generation's own limit, so an image call can still fail on quota.";
+const IMAGE_NOTE =
+  "Google doesn't report image generation's own limit. " +
+  "When an image call fails on quota, record it with agy-switch ran-out image --resets-in <wait>, then switch. " +
+  "Until it resets, pick --for image ranks that account last.";
 
 /**
  * Every limit on work in one group: its own and those of the group it shares
@@ -216,7 +226,13 @@ async function readLiveQuota(accounts: Account[]): Promise<Map<string, Live>> {
   const results = await Promise.all(
     accounts.map(async (a): Promise<[string, Live]> => {
       try {
-        return [a.id, { groups: await probeQuota(a) }];
+        const groups = await probeQuota(a);
+        // Google doesn't report image generation's own limit, so add the one ran-out recorded.
+        const image = groups.find((g) => g.name === IMAGE_GENERATION);
+        if (image && a.imageLimit && Date.parse(a.imageLimit.resetsAt) > Date.now()) {
+          image.buckets.push({ name: "own limit", percentage: 0, reset_time: a.imageLimit.resetsAt, group: IMAGE_GENERATION });
+        }
+        return [a.id, { groups }];
       } catch (err) {
         return [a.id, { error: errorText(err) }];
       }
@@ -343,7 +359,7 @@ async function cmdPick({ flags }: Parsed) {
     .sort((x, y) => (y.quotaLeft ?? -1) - (x.quotaLeft ?? -1));
 
   const rankedBy = group ?? "tightest limit across all model groups";
-  const note = group === IMAGE_GENERATION ? `${IMAGE_NOTE} If one does, switch accounts.` : undefined;
+  const note = group === IMAGE_GENERATION ? IMAGE_NOTE : undefined;
   if (flags.json) {
     return printJson({
       rankedBy,
@@ -483,6 +499,38 @@ function cmdSwitch({ args, flags }: Parsed) {
   console.log(note);
 }
 
+/** "4h57m19s" or "4h57m19.81s", the way Google's quotaResetDelay gives a wait, in milliseconds. */
+export function parseWait(text: string): number | null {
+  if (!/^(\d+(\.\d+)?[hms])+$/.test(text)) return null;
+  const unit: Record<string, number> = { h: 3_600_000, m: 60_000, s: 1000 };
+  let ms = 0;
+  for (const [, amount, u] of text.matchAll(/(\d+(?:\.\d+)?)([hms])/g)) ms += Number(amount) * unit[u];
+  return ms > 0 ? ms : null;
+}
+
+function cmdRanOut({ args, flags }: Parsed) {
+  if (args[0]?.toLowerCase() !== "image") {
+    throw usage(
+      "ran-out records image generation only, such as: agy-switch ran-out image --resets-in 4h57m19s. Google reports every other limit itself.",
+    );
+  }
+  const wait = typeof flags["resets-in"] === "string" ? parseWait(flags["resets-in"]) : null;
+  if (!wait) throw usage("--resets-in takes the wait from the failed call, such as --resets-in 4h57m19s.");
+
+  const accounts = readAccounts();
+  const ref = args[1] ?? activeAccounts(accounts).t3;
+  if (!ref) {
+    throw usage("T3 Code isn't using a saved account. Name the account, such as: agy-switch ran-out image you@example.com --resets-in 4h57m19s");
+  }
+  const account = resolveAccount(ref, accounts);
+  const resetsAt = new Date(Date.now() + wait).toISOString();
+  recordImageLimit(account.id, resetsAt);
+
+  if (flags.json) return printJson({ ranOut: IMAGE_GENERATION, account: account.email, resetsAt, next: "agy-switch pick --for image --json" });
+  console.log(`Recorded that image generation ran out on ${account.email}. It resets in ${span(resetsAt)}.`);
+  console.log("Until then, pick --for image ranks it last. Find another account with: agy-switch pick --for image");
+}
+
 async function cmdAdd({ flags }: Parsed) {
   const seconds = flags.timeout === undefined ? 300 : Number(flags.timeout);
   if (!Number.isFinite(seconds) || seconds <= 0) throw usage("--timeout takes a number of seconds, such as --timeout 300.");
@@ -608,6 +656,7 @@ const RUN: Record<string, (p: Parsed) => void | Promise<void>> = {
   pick: cmdPick,
   quota: cmdQuota,
   switch: cmdSwitch,
+  "ran-out": cmdRanOut,
   add: cmdAdd,
   remove: cmdRemove,
   doctor: cmdDoctor,

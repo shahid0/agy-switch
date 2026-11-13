@@ -21,7 +21,9 @@ for Claude runs.
 2. If the account in use (`active.t3: true`) can't cover the batch, switch to
    the best candidate before you start (see Switch).
 3. If it runs low partway through, switch before you start the next run.
-4. If a run still stops on a quota limit, switch and run it again.
+4. If a run still stops on a quota limit, switch and run it again. When an
+   image call fails on quota, record it with
+   `agy-switch ran-out image --resets-in <wait>`, then switch.
 5. In your next message or report, say which account is in use now and what it
    replaced.
 
@@ -38,6 +40,7 @@ terminal, the JSON comes on one line.
 | See quota on every account | `agy-switch quota --json` |
 | Switch T3 Code | `agy-switch switch <email> --json` |
 | Switch T3 Code and the agy CLI | `agy-switch switch <email> --target both --json` |
+| Record that image generation ran out | `agy-switch ran-out image --resets-in <wait> --json` |
 | List saved accounts with live quota | `agy-switch list --json` |
 
 An account can also be given as the start of its email, its name, or its number
@@ -100,8 +103,27 @@ Then quota, then `resetsAt`, then `lastUsedAt`.
 Image generation also has a limit of its own, which Google doesn't report. So
 an image call can fail with `429 RESOURCE_EXHAUSTED` even on the account
 `--for image` ranks first. In one test, 13 images used up an account's image
-limit in about 5 minutes while its Gemini Models group still had 36% left. Then
-switch, and run only the missing images again.
+limit in about 5 minutes while its Gemini Models group still had 36% left.
+
+When an image call fails on quota, record it with
+`agy-switch ran-out image --resets-in <wait>`, then switch. `<wait>` is the
+error's `quotaResetDelay`, or the time in "Your quota will reset after
+4h57m19s". Run it before you switch: it records the account T3 Code uses, or
+the account you name after `image`.
+
+```sh
+$ agy-switch ran-out image --resets-in 4h57m19s --json
+{
+  "ranOut": "Image generation",
+  "account": "dev@example.com",
+  "resetsAt": "2026-11-13T13:10:35.000Z",
+  "next": "agy-switch pick --for image --json"
+}
+```
+
+Until it resets, `pick --for image` ranks that account last, with
+`quotaLeft: 0` and `limitedBy: "Image generation"`. Then run only the missing
+images again.
 
 ## Switch
 
@@ -164,7 +186,7 @@ $ agy-switch quota --json
         "sharesLimitsWith": "Gemini Models",
         "left": null,
         "windows": [],
-        "note": "Google doesn't report image generation's own limit, so an image call can still fail on quota."
+        "note": "Google doesn't report image generation's own limit. When an image call fails on quota, …"
       }
     ]
   }
@@ -175,7 +197,8 @@ $ agy-switch quota --json
   much Claude quota is left?". It changes nothing.
 - `models` lists the models in the group, as Google names them.
 - `sharesLimitsWith` names a group whose limits apply too. Image generation's
-  `left` is `null` because Google doesn't report its own limit.
+  `left` is `null` because Google doesn't report its own limit. After
+  `ran-out image`, it has an `own limit` window at 0% until it resets.
 
 ## Accounts that can't run agents
 

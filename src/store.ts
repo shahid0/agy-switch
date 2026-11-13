@@ -41,6 +41,8 @@ export type Account = {
   grantedScopes: string[];
   quota?: { models: QuotaBucket[] } | null;
   quotaCheckedAt?: string | null;
+  /** When image generation ran out, from `ran-out`: Google doesn't report it. */
+  imageLimit?: { resetsAt: string; recordedAt: string } | null;
   addedAt: string;
   lastUsedAt: string | null;
 };
@@ -122,6 +124,14 @@ export function markUsed(id: string): void {
   const account = store.accounts.find((a) => a.id === id);
   if (!account) return;
   account.lastUsedAt = new Date().toISOString();
+  writeStore(store);
+}
+
+export function recordImageLimit(id: string, resetsAt: string): void {
+  const store = readStore();
+  const account = store.accounts.find((a) => a.id === id);
+  if (!account) return;
+  account.imageLimit = { resetsAt, recordedAt: new Date().toISOString() };
   writeStore(store);
 }
 
