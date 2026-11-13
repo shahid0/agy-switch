@@ -31,7 +31,9 @@ Plain, exact, calm. Never cute, never alarmed, never salesy.
 | the agy CLI | surface | The other app. Its target name is `agy` |
 | quota left | score, headroom | Percent left on a limit |
 | tightest limit | worst bucket | The limit that runs out first |
-| model group | bucket | Models that share limits, named by Google, such as Claude and GPT models |
+| model group | bucket | Models that share limits, named by Google, such as Claude and GPT models. Image generation is agy-switch's name for the image models |
+| image generation | images quota, image bucket | Making images, such as with generate_image. Google doesn't report its own limit |
+| Hydrogen runs, Argon runs, Claude runs | | Runs on Gemini 4 Hydrogen, Gemini 4 Argon or a Claude model |
 | sign in, sign-in | log in, authenticate, authorise | Approving an account in the browser |
 | Antigravity server | harness | The agy_acp_server.par bundled with T3 Code. The env var keeps its name, AGY_SWITCH_HARNESS |
 | in use | | The account an app uses now. JSON calls it `active` |
@@ -44,6 +46,7 @@ Plain, exact, calm. Never cute, never alarmed, never salesy.
 | add | Sign in and save an account | login |
 | remove | Delete a saved account | delete, rm (an alias only) |
 | pick | Rank accounts. Never switches | choose, best (an alias only) |
+| ran out | Record that image generation ran out on an account. Command: ran-out | exhausted, mark |
 
 ## Never name
 
@@ -58,6 +61,8 @@ Plain, exact, calm. Never cute, never alarmed, never salesy.
 | When to switch | Switch on your own, without asking, when the account in use doesn't have the quota for the work ahead. |
 | Running sessions | Sessions already running keep the account they started with. |
 | After a switch | Sessions started after a switch use the new account. |
+| Which quota to rank by | Rank by the quota your runs use: --for hydrogen for Hydrogen runs, --for argon for Argon runs, --for image for image generation, --for claude for Claude runs. |
+| After an image call fails on quota | When an image call fails on quota, record it with agy-switch ran-out image --resets-in <wait>, then switch. |
 | Fixing an account | Run agy-switch add and approve every permission. |
 | Exit codes | 0 done, 1 something failed, 2 the command needs fixing. |
 

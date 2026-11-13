@@ -7,6 +7,7 @@ import {
   markUsed,
   missingScopes,
   readAccounts,
+  recordImageLimit,
   removeAccount,
   saveQuota,
   scopeLabel,
@@ -155,6 +156,16 @@ describe("remove and markUsed", () => {
     expect(before).toBeTruthy();
     markUsed("no-such-id");
     expect(readAccounts()[0].lastUsedAt).toBe(before);
+  });
+
+  test("recordImageLimit keeps the reset time only for a known id, and a new record replaces the old", () => {
+    const { account } = upsertAccount(base({ email: "images@example.com" }));
+    recordImageLimit(account.id, "2026-11-13T13:10:35.000Z");
+    recordImageLimit(account.id, "2026-11-13T18:00:00.000Z");
+    recordImageLimit("no-such-id", "2026-11-14T00:00:00.000Z");
+    const [saved] = readAccounts();
+    expect(saved.imageLimit?.resetsAt).toBe("2026-11-13T18:00:00.000Z");
+    expect(saved.imageLimit?.recordedAt).toBeTruthy();
   });
 });
 

@@ -12,12 +12,18 @@ quota for the work ahead.
 You can switch in the middle of a batch too. Sessions already running keep the
 account they started with. Sessions started after a switch use the new account.
 
-1. Before a batch of runs, check the model group they use:
+Rank by the quota your runs use: `--for hydrogen` for Hydrogen runs,
+`--for argon` for Argon runs, `--for image` for image generation, `--for claude`
+for Claude runs.
+
+1. Before a batch of runs, check the quota they use:
    `agy-switch pick --for <model> --json`.
 2. If the account in use (`active.t3: true`) can't cover the batch, switch to
    the best candidate before you start (see Switch).
 3. If it runs low partway through, switch before you start the next run.
-4. If a run still stops on a quota limit, switch and run it again.
+4. If a run still stops on a quota limit, switch and run it again. When an
+   image call fails on quota, record it with
+   `agy-switch ran-out image --resets-in <wait>`, then switch.
 5. In your next message or report, say which account is in use now and what it
    replaced.
 
@@ -30,10 +36,11 @@ terminal, the JSON comes on one line.
 | :-- | :-- |
 | See which account each app uses | `agy-switch current --json` |
 | Find the account with the most quota | `agy-switch pick --json` |
-| Find the account with the most quota on one model | `agy-switch pick --for claude --json` |
+| Find the account with the most quota for one kind of run | `agy-switch pick --for hydrogen --json` |
 | See quota on every account | `agy-switch quota --json` |
 | Switch T3 Code | `agy-switch switch <email> --json` |
 | Switch T3 Code and the agy CLI | `agy-switch switch <email> --target both --json` |
+| Record that image generation ran out | `agy-switch ran-out image --resets-in <wait> --json` |
 | List saved accounts with live quota | `agy-switch list --json` |
 
 An account can also be given as the start of its email, its name, or its number
@@ -71,17 +78,52 @@ $ agy-switch pick --json
 
 - `pick` reads quota live from Google and ranks best first. It never switches.
 - It leaves out accounts that can't run agents. `--all` includes them.
-- Google limits each model group over a 5-hour window and a weekly one.
+- Google limits each model group over a 5-hour window, a weekly one, or both.
   `quotaLeft` is the percent left on the tightest of them, `limitedBy` names
   it, and `resetsAt` says when it refills.
-- `--for <model>` ranks by one model group. It understands names like `claude`,
-  `gpt`, `gemini`, `"Gemini 3 Pro"` and `argon`. Claude and GPT models share one
-  group.
+- `--for <model>` ranks by one model group. It understands names like
+  `hydrogen`, `argon`, `image`, `claude`, `gpt`, `gemini` and `"Gemini 3 Pro"`,
+  and model ids like `gemini-4-hydrogen-high`.
+- With `--for image`, `note` says what the ranking can't see.
 - `quotaLeft: null` with a `quotaError` means Google couldn't be read for that
   account.
 
 Choose by what the user said first, such as an account or a model they named.
 Then quota, then `resetsAt`, then `lastUsedAt`.
+
+## Which `--for` to use
+
+| Work | Run | Ranks by |
+| :-- | :-- | :-- |
+| Hydrogen runs | `pick --for hydrogen` | Gemini Models, the limits every Gemini Flash and Gemini Pro model shares |
+| Argon runs | `pick --for argon` | Gemini 4 Argon, Argon's own weekly limit |
+| Image generation | `pick --for image` | The Gemini Models limits, which image generation uses too |
+| Claude runs | `pick --for claude` | Claude and GPT models, the limits Claude and GPT-OSS share |
+
+Image generation also has a limit of its own, which Google doesn't report. So
+an image call can fail with `429 RESOURCE_EXHAUSTED` even on the account
+`--for image` ranks first. In one test, 13 images used up an account's image
+limit in about 5 minutes while its Gemini Models group still had 36% left.
+
+When an image call fails on quota, record it with
+`agy-switch ran-out image --resets-in <wait>`, then switch. `<wait>` is the
+error's `quotaResetDelay`, or the time in "Your quota will reset after
+4h57m19s". Run it before you switch: it records the account T3 Code uses, or
+the account you name after `image`.
+
+```sh
+$ agy-switch ran-out image --resets-in 4h57m19s --json
+{
+  "ranOut": "Image generation",
+  "account": "dev@example.com",
+  "resetsAt": "2026-11-13T13:10:35.000Z",
+  "next": "agy-switch pick --for image --json"
+}
+```
+
+Until it resets, `pick --for image` ranks that account last, with
+`quotaLeft: 0` and `limitedBy: "Image generation"`. Then run only the missing
+images again.
 
 ## Switch
 
@@ -113,21 +155,50 @@ $ agy-switch quota --json
     "ok": true,
     "groups": [
       {
+        "name": "Gemini Models",
+        "models": "Gemini 2.5 Pro, Gemini 3 Flash, Gemini 3.8 Flash, Gemini 4 Hydrogen",
+        "left": 36,
+        "windows": [
+          {"window": "weekly", "left": 77, "resetsAt": "2026-11-17T07:45:00Z"},
+          {"window": "5h", "left": 36, "resetsAt": "2026-11-13T12:30:00Z"}
+        ]
+      },
+      {
         "name": "Claude and GPT models",
-        "models": "Claude Opus, Claude Sonnet, GPT-OSS",
+        "models": "Claude Opus 5.5, Claude Sonnet 5.5, GPT-OSS 120B",
         "left": 90,
         "windows": [
           {"window": "weekly", "left": 95, "resetsAt": "2026-11-16T09:00:00Z"},
-          {"window": "5h", "left": 90, "resetsAt": "2026-11-10T11:00:00Z"}
+          {"window": "5h", "left": 90, "resetsAt": "2026-11-13T11:00:00Z"}
         ]
+      },
+      {
+        "name": "Gemini 4 Argon",
+        "models": "Gemini 4 Argon",
+        "left": 99,
+        "windows": [
+          {"window": "weekly", "left": 99, "resetsAt": "2026-11-17T06:31:00Z"}
+        ]
+      },
+      {
+        "name": "Image generation",
+        "models": "Gemini 3.1 Flash Image",
+        "sharesLimitsWith": "Gemini Models",
+        "left": null,
+        "windows": [],
+        "note": "Google doesn't report image generation's own limit. When an image call fails on quota, …"
       }
     ]
   }
 ]
 ```
 
-A group's `left` is its tightest window. Use this for questions like "how much
-Claude quota is left?". It changes nothing.
+- A group's `left` is its tightest window. Use this for questions like "how
+  much Claude quota is left?". It changes nothing.
+- `models` lists the models in the group, as Google names them.
+- `sharesLimitsWith` names a group whose limits apply too. Image generation's
+  `left` is `null` because Google doesn't report its own limit. After
+  `ran-out image`, it has an `own limit` window at 0% until it resets.
 
 ## Accounts that can't run agents
 
@@ -163,6 +234,8 @@ different account without saying so.
   keep the account they started with, in T3 Code and in the agy CLI. Sessions
   started after a switch use the new account.
 - **That every account can run agents.** Check `canRunAgents`.
+- **That Google reports every limit.** It doesn't report image generation's own
+  limit. See Which `--for` to use.
 - **That editing the files works the same.** Use the commands. The account file
   is written atomically, and a hand edit skips every check.
 
