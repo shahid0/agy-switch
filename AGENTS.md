@@ -1,7 +1,21 @@
 # agy-switch for AI agents
 
 agy-switch switches the Google Antigravity account that T3 Code uses, and the
-`agy` CLI if asked.
+`agy` CLI if asked. It's there so you can keep working without the user,
+overnight too, when an account runs low on quota.
+
+## When to switch
+
+Switch on your own, without asking, whenever the account in use doesn't have
+the quota for the work you're about to do.
+
+1. Before a batch of runs, check the model group they use:
+   `agy-switch pick --for <model> --json`.
+2. If the account in use (`active.t3: true`) can't cover the batch, switch to
+   the best candidate before you start (see Switch).
+3. If a run still stops on a quota limit, switch and run it again.
+4. In your next message or report, say which account is in use now and what it
+   replaced.
 
 ## Commands
 
