@@ -30,6 +30,47 @@ const account = (key: string, over: Partial<Account> = {}): Account => ({
   ...over,
 });
 
+/** Google, faked: each account's Gemini Models 5h limit is `gemini5h[key]`, its other limits 100%. */
+function fakeGoogle(gemini5h: Record<string, number>) {
+  const full = { remainingFraction: 1, resetTime: "2026-11-13T13:00:00Z" };
+  spyOn(globalThis, "fetch").mockImplementation((async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.endsWith("/token")) {
+      const key = new URLSearchParams(String(init?.body)).get("refresh_token")!.slice("rt-".length);
+      return Response.json({ access_token: `at-${key}`, expires_in: 3600 });
+    }
+    const key = new Headers(init?.headers).get("Authorization")!.slice("Bearer at-".length);
+    const gemini = { remainingFraction: gemini5h[key], resetTime: "2026-11-13T12:30:00Z" };
+    if (url.endsWith(":retrieveUserQuotaSummary")) {
+      return Response.json({
+        groups: [
+          {
+            displayName: "Gemini Models",
+            description: "Models within this group: Gemini Flash, Gemini Pro",
+            buckets: [{ bucketId: "gemini-5h", window: "5h", ...gemini }],
+          },
+          {
+            displayName: "Claude and GPT models",
+            description: "Models within this group: Claude Opus, Claude Sonnet, GPT-OSS",
+            buckets: [{ bucketId: "3p-5h", window: "5h", ...full }],
+          },
+        ],
+      });
+    }
+    if (url.endsWith(":fetchAvailableModels")) {
+      return Response.json({
+        models: {
+          "gemini-4-hydrogen-high": { displayName: "Gemini 4 Hydrogen (High)", quotaInfo: gemini },
+          "gemini-3.1-flash-image": { displayName: "Gemini 3.1 Flash Image", quotaInfo: gemini },
+          "claude-opus-5-5-high": { displayName: "Claude Opus 5.5 (High)", quotaInfo: full },
+        },
+        imageGenerationModelIds: ["gemini-3.1-flash-image"],
+      });
+    }
+    throw new Error(`unexpected request to ${url}`);
+  }) as typeof fetch);
+}
+
 describe("parseArgs", () => {
   test("a flag before the account doesn't swallow it", () => {
     expect(parseArgs(["switch", "--json", "ben"])).toEqual({ command: "switch", args: ["ben"], flags: { json: true } });
@@ -195,6 +236,54 @@ describe("commands", () => {
     const saved = JSON.parse(readFileSync(join(home, ".agy-switch/accounts.json"), "utf8")).accounts[0];
     expect(saved.quota.models.map((b: { name: string }) => b.name)).toEqual(["3p-weekly", "3p-5h"]);
     expect(saved.quotaCheckedAt).toBeTruthy();
+  });
+
+  test("quota names each group's models and lists image generation, whose own limit Google doesn't report", async () => {
+    fakeGoogle({ ana: 0.36 });
+    await main(["quota", "ana", "--json"]);
+    expect(JSON.parse(printed[0])[0].groups).toEqual([
+      {
+        name: "Gemini Models",
+        models: "Gemini 4 Hydrogen",
+        left: 36,
+        windows: [{ window: "5h", left: 36, resetsAt: "2026-11-13T12:30:00Z" }],
+      },
+      {
+        name: "Claude and GPT models",
+        models: "Claude Opus 5.5",
+        left: 100,
+        windows: [{ window: "5h", left: 100, resetsAt: "2026-11-13T13:00:00Z" }],
+      },
+      {
+        name: "Image generation",
+        models: "Gemini 3.1 Flash Image",
+        sharesLimitsWith: "Gemini Models",
+        left: null,
+        windows: [],
+        note: "Google doesn't report image generation's own limit, so an image call can still fail on quota.",
+      },
+    ]);
+  });
+
+  test("pick --for image ranks by the Gemini Models limits that image generation shares", async () => {
+    fakeGoogle({ ana: 0.2, ben: 0.6 });
+    await main(["pick", "--for", "image", "--json"]);
+    const out = JSON.parse(printed[0]);
+    expect(out.rankedBy).toBe("Image generation");
+    expect(out.candidates.map((c: { email: string; quotaLeft: number; limitedBy: string }) => [c.email, c.quotaLeft, c.limitedBy])).toEqual([
+      ["ben@example.com", 60, "Gemini Models, 5h"],
+      ["ana@example.com", 20, "Gemini Models, 5h"],
+    ]);
+    expect(out.note).toStartWith("Google doesn't report image generation's own limit");
+  });
+
+  test("pick --for hydrogen ranks by Gemini Models, the group Hydrogen is in", async () => {
+    fakeGoogle({ ana: 0.2, ben: 0.6 });
+    await main(["pick", "--for", "hydrogen", "--json"]);
+    const out = JSON.parse(printed[0]);
+    expect(out.rankedBy).toBe("Gemini Models");
+    expect(out.candidates.map((c: { email: string }) => c.email)).toEqual(["ben@example.com", "ana@example.com"]);
+    expect(out.note).toBeUndefined();
   });
 
   test("list falls back to the last snapshot, and says how old it is, when Google can't be reached", async () => {

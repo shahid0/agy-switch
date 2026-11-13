@@ -59,9 +59,29 @@ switch on your own, without asking, when the account in use doesn't have the
 quota for the work ahead.
 
 ```sh
-agy-switch pick --json               # live ranking, best first
-agy-switch switch <email> --json     # move to the best one
+agy-switch pick --for hydrogen --json   # live ranking for Hydrogen runs, best first
+agy-switch switch <email> --json        # move to the best one
 ```
+
+Rank by the quota your runs use: `--for hydrogen` for Hydrogen runs,
+`--for argon` for Argon runs, `--for image` for image generation, `--for claude`
+for Claude runs.
+
+## Quota groups
+
+Google puts models that share limits in a group, and limits each group over a
+5-hour window, a weekly one, or both. `quota` shows every group with its models:
+
+| Group | Models |
+| :-- | :-- |
+| Gemini Models | Gemini Flash and Gemini Pro models, Gemini 4 Hydrogen |
+| Claude and GPT models | Claude Opus, Claude Sonnet, GPT-OSS |
+| Gemini 4 Argon | Gemini 4 Argon |
+| Image generation | Gemini 3.1 Flash Image |
+
+Image generation uses the Gemini Models limits and has one of its own, which
+Google doesn't report. So an image call can fail on quota while Gemini Models
+still has quota left.
 
 ## Signing in
 
