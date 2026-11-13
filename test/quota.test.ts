@@ -83,6 +83,21 @@ describe("quotaGroups", () => {
     ]);
   });
 
+  test("models stay in their groups when Google drops its lists or names a group like the start of another", () => {
+    const unlisted: Summary = { groups: summary.groups!.map(({ description, ...g }) => g) };
+    expect(quotaGroups(unlisted, available).map((g) => [g.name, g.models, g.sharesLimitsWith])).toEqual([
+      ["Gemini Models", ["Gemini 2.5 Pro", "Gemini 3.8 Flash", "Gemini 4 Hydrogen"], undefined],
+      ["Claude and GPT models", ["Claude Opus 5.5", "GPT-OSS 120B"], undefined],
+      ["Gemini 4 Argon", ["Gemini 4 Argon"], undefined],
+      ["Image generation", ["Gemini 3.1 Flash Image"], "Gemini Models"],
+    ]);
+    // Without the lists, "flash" is ambiguous instead of quietly meaning image generation.
+    expect(matchGroup(quotaGroups(unlisted, available), "flash").map((g) => g.name)).toEqual(["Gemini Models", "Image generation"]);
+
+    const renamed: Summary = { groups: summary.groups!.map((g) => (g.displayName === "Gemini Models" ? { ...g, displayName: "Gemini" } : g)) };
+    expect(quotaGroups(renamed, available).map((g) => [g.name, g.models])).toContainEqual(["Gemini 4 Argon", ["Gemini 4 Argon"]]);
+  });
+
   test("without the model list, groups keep the models Google lists", () => {
     expect(quotaGroups(summary, null).map((g) => [g.name, g.models])).toEqual([
       ["Gemini Models", ["Gemini Flash", "Gemini Pro"]],

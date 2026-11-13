@@ -139,19 +139,27 @@ function byTiers<T>(items: T[], tests: Array<(item: T) => boolean>): T[] {
   return [];
 }
 
+const sameWords = (a: string, b: string) => words(a).join(" ") === words(b).join(" ");
+
 /**
- * The group a model belongs to: the group named after it ("Gemini 4 Argon"),
- * else the group whose list covers it ("Gemini 3.8 Flash" is a "Gemini Flash"),
- * else the one group listing models of the same family ("Gemini 4 Hydrogen").
+ * The group each model belongs to: the group named after it ("Gemini 4
+ * Argon"), else the group whose list covers it ("Gemini 3.8 Flash" is a
+ * "Gemini Flash"), else the one other group whose list, then whose name, has
+ * the model's family ("Gemini 4 Hydrogen" goes to Gemini Models). A group named
+ * after a model holds only that model.
  */
-function groupOf(groups: QuotaGroup[], model: string): QuotaGroup | undefined {
-  const have = words(model);
-  const hits = byTiers(groups, [
-    (g) => words(g.name).every((w, i) => have[i] === w),
-    (g) => g.listed.some((l) => words(l).every((w) => have.includes(w))),
-    (g) => g.listed.some((l) => words(l)[0] === have[0]),
-  ]);
-  return hits.length === 1 ? hits[0] : undefined;
+function grouper(groups: QuotaGroup[], modelNames: string[]) {
+  const namedAfterModel = new Set(groups.filter((g) => modelNames.some((m) => sameWords(g.name, m))));
+  return (model: string): QuotaGroup | undefined => {
+    const have = words(model);
+    const hits = byTiers(groups, [
+      (g) => sameWords(g.name, model),
+      (g) => g.listed.some((l) => words(l).every((w) => have.includes(w))),
+      (g) => !namedAfterModel.has(g) && g.listed.some((l) => words(l).includes(have[0])),
+      (g) => !namedAfterModel.has(g) && words(g.name).includes(have[0]),
+    ]);
+    return hits.length === 1 ? hits[0] : undefined;
+  };
 }
 
 /**
@@ -165,7 +173,7 @@ function groupOf(groups: QuotaGroup[], model: string): QuotaGroup | undefined {
 export function quotaGroups(summary: Summary, available: Available | null): QuotaGroup[] {
   const groups: QuotaGroup[] = (summary.groups ?? [])
     .map((g) => {
-      const name = g.displayName ?? "Other models";
+      const name = g.displayName || "Other models";
       return {
         name,
         listed: (/^Models within this group:\s*(.+)$/i.exec(g.description ?? "")?.[1] ?? "")
@@ -194,9 +202,10 @@ export function quotaGroups(summary: Summary, available: Available | null): Quot
 
   const imageIds = new Set(available?.imageGenerationModelIds ?? []);
   const image: QuotaGroup = { name: IMAGE_GENERATION, listed: [], models: [], modelIds: [], buckets: [] };
+  const groupOf = grouper(groups, models.map(([, m]) => modelName(m.displayName!)));
   for (const [id, m] of models) {
     const name = modelName(m.displayName!);
-    const home = groupOf(groups, name);
+    const home = groupOf(name);
     const into = imageIds.has(id) ? image : home;
     if (into === image) image.sharesLimitsWith ??= home?.name;
     if (!into) continue;

@@ -30,8 +30,11 @@ const account = (key: string, over: Partial<Account> = {}): Account => ({
   ...over,
 });
 
-/** Google, faked: each account's Gemini Models 5h limit is `gemini5h[key]`, its other limits 100%. */
-function fakeGoogle(gemini5h: Record<string, number>) {
+/**
+ * Google, faked: each account's Gemini Models 5h limit is `gemini5h[key]`, its
+ * other limits 100%. The model list fails for the accounts in `noModels`.
+ */
+function fakeGoogle(gemini5h: Record<string, number>, noModels: string[] = []) {
   const full = { remainingFraction: 1, resetTime: "2026-11-13T13:00:00Z" };
   spyOn(globalThis, "fetch").mockImplementation((async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -58,6 +61,7 @@ function fakeGoogle(gemini5h: Record<string, number>) {
       });
     }
     if (url.endsWith(":fetchAvailableModels")) {
+      if (noModels.includes(key)) return new Response("", { status: 503 });
       return Response.json({
         models: {
           "gemini-4-hydrogen-high": { displayName: "Gemini 4 Hydrogen (High)", quotaInfo: gemini },
@@ -112,8 +116,9 @@ describe("parseWait", () => {
     expect(parseWait("90m")).toBe(5_400_000);
   });
 
-  test("rejects anything else, and a wait of nothing", () => {
-    for (const text of ["", "soon", "4 hours", "500ms", "0s", "-1h"]) expect(parseWait(text)).toBeNull();
+  test("rejects anything else, a wait of nothing, and one longer than a week", () => {
+    for (const text of ["", "soon", "4 hours", "500ms", "0s", "-1h", "169h", "999999999999999h"]) expect(parseWait(text)).toBeNull();
+    expect(parseWait("168h")).toBe(604_800_000);
   });
 });
 
@@ -313,6 +318,47 @@ describe("commands", () => {
       ["ana@example.com", 60],
       ["ben@example.com", 20],
     ]);
+  });
+
+  test("pick --for image still ranks accounts whose model list didn't come back, recorded limits included", async () => {
+    const soon = { resetsAt: new Date(Date.now() + 3_600_000).toISOString(), recordedAt: new Date().toISOString() };
+    writeFileSync(
+      join(home, ".agy-switch/accounts.json"),
+      JSON.stringify({ version: 1, accounts: [account("ana"), account("ben"), account("dan", { imageLimit: soon })] }),
+    );
+    fakeGoogle({ ana: 0.5, ben: 0.6, dan: 0.9 }, ["ben", "dan"]);
+    await main(["pick", "--for", "image", "--json"]);
+    expect(JSON.parse(printed[0]).candidates.map((c: { email: string; quotaLeft: number; limitedBy: string }) => [c.email, c.quotaLeft, c.limitedBy])).toEqual([
+      ["ben@example.com", 60, "Gemini Models, 5h"],
+      ["ana@example.com", 50, "Gemini Models, 5h"],
+      ["dan@example.com", 0, "Image generation"],
+    ]);
+  });
+
+  test("a recorded image limit stays out of list and the saved snapshot", async () => {
+    await main(["ran-out", "image", "--resets-in", "2h", "--json"]);
+    printed = [];
+    fakeGoogle({ ana: 0.5, ben: 0.6 });
+    await main(["list", "--json"]);
+    expect(JSON.parse(printed[0])[0]).toMatchObject({ email: "ana@example.com", quota: { left: 50, limitedBy: "Gemini Models, 5h" } });
+    const saved = JSON.parse(readFileSync(join(home, ".agy-switch/accounts.json"), "utf8")).accounts[0];
+    expect(saved.quota.models.map((b: { name: string }) => b.name)).toEqual(["gemini-5h", "3p-5h"]);
+  });
+
+  test("ran-out records the account it's given, and asks for one when T3 Code uses an unsaved account", async () => {
+    await main(["ran-out", "image", "ben", "--resets-in", "1h", "--json"]);
+    expect(JSON.parse(printed[0]).account).toBe("ben@example.com");
+    const accounts = JSON.parse(readFileSync(join(home, ".agy-switch/accounts.json"), "utf8")).accounts;
+    expect(accounts.map((a: Account) => [a.email, Boolean(a.imageLimit)])).toEqual([
+      ["ana@example.com", false],
+      ["ben@example.com", true],
+      ["cleo@example.com", false],
+    ]);
+
+    writeFileSync(t3File(), JSON.stringify({ ...accounts[0].acpToken, refresh_token: "rt-unsaved" }));
+    await main(["ran-out", "image", "--resets-in", "1h", "--json"]);
+    expect(process.exitCode).toBe(2);
+    expect(JSON.parse(printed[1]).error.message).toStartWith("T3 Code isn't using a saved account.");
   });
 
   test("ran-out records only image generation, and needs the wait", async () => {

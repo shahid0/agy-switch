@@ -209,14 +209,13 @@ const IMAGE_NOTE =
   "Until it resets, pick --for image ranks that account last.";
 
 /**
- * Every limit on work in one group: its own and those of the group it shares
- * limits with. Without a group, every limit Google reports.
+ * Every limit on work in `target`: an account's limits in that group and in the
+ * group it shares limits with, found by name, so an account whose model list
+ * didn't come back still counts. Without a target, every limit Google reports.
  */
-function limitsFor(groups: QuotaGroup[], name?: string): QuotaBucket[] {
-  if (!name) return groups.filter((g) => g.name !== IMAGE_GENERATION).flatMap((g) => g.buckets);
-  const group = groups.find((g) => g.name === name);
-  const shared = groups.find((g) => g.name === group?.sharesLimitsWith);
-  return [...(group?.buckets ?? []), ...(shared?.buckets ?? [])];
+function limitsFor(groups: QuotaGroup[], target?: QuotaGroup): QuotaBucket[] {
+  if (!target) return groups.filter((g) => g.name !== IMAGE_GENERATION).flatMap((g) => g.buckets);
+  return groups.filter((g) => g.name === target.name || g.name === target.sharesLimitsWith).flatMap((g) => g.buckets);
 }
 
 type Live = { groups: QuotaGroup[] } | { error: string };
@@ -228,8 +227,9 @@ async function readLiveQuota(accounts: Account[]): Promise<Map<string, Live>> {
       try {
         const groups = await probeQuota(a);
         // Google doesn't report image generation's own limit, so add the one ran-out recorded.
-        const image = groups.find((g) => g.name === IMAGE_GENERATION);
-        if (image && a.imageLimit && Date.parse(a.imageLimit.resetsAt) > Date.now()) {
+        if (a.imageLimit && Date.parse(a.imageLimit.resetsAt) > Date.now()) {
+          let image = groups.find((g) => g.name === IMAGE_GENERATION);
+          if (!image) groups.push((image = { name: IMAGE_GENERATION, listed: [], models: [], modelIds: [], buckets: [] }));
           image.buckets.push({ name: "own limit", percentage: 0, reset_time: a.imageLimit.resetsAt, group: IMAGE_GENERATION });
         }
         return [a.id, { groups }];
@@ -316,7 +316,7 @@ async function cmdPick({ flags }: Parsed) {
 
   const live = await readLiveQuota(pool);
   const query = typeof flags.for === "string" ? flags.for : undefined;
-  let group: string | undefined;
+  let target: QuotaGroup | undefined;
   if (query) {
     const read = [...live.values()].filter((r): r is { groups: QuotaGroup[] } => "groups" in r);
     // An account whose model list came back knows which models each group covers.
@@ -333,15 +333,16 @@ async function cmdPick({ flags }: Parsed) {
           candidates: options,
         });
       }
-      group = hits[0].name;
+      target = hits[0];
     }
   }
 
+  const group = target?.name;
   const active = activeAccounts(accounts);
   const candidates = pool
     .map((a) => {
       const r = live.get(a.id)!;
-      const headroom = tightest("groups" in r ? limitsFor(r.groups, group) : []);
+      const headroom = tightest("groups" in r ? limitsFor(r.groups, target) : []);
       return {
         email: a.email,
         name: a.name,
@@ -505,7 +506,8 @@ export function parseWait(text: string): number | null {
   const unit: Record<string, number> = { h: 3_600_000, m: 60_000, s: 1000 };
   let ms = 0;
   for (const [, amount, u] of text.matchAll(/(\d+(?:\.\d+)?)([hms])/g)) ms += Number(amount) * unit[u];
-  return ms > 0 ? ms : null;
+  // No Google limit lasts longer than its weekly window.
+  return ms > 0 && ms <= 7 * 24 * 3_600_000 ? ms : null;
 }
 
 function cmdRanOut({ args, flags }: Parsed) {
