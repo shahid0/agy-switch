@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { main, parseArgs, parseWait, resolveAccount } from "../src/cli.ts";
@@ -157,7 +157,11 @@ describe("resolveAccount", () => {
 describe("commands", () => {
   let home: string;
   let printed: string[];
-  const t3File = () => join(home, ".t3/userdata/providers/antigravity/i1/antigravity-acp/acp_token.json");
+  /** The agy folder in T3 Code's profile, where its Gemini runs read their sign-in. */
+  const t3Dir = () => join(home, ".t3/userdata/providers/antigravity/i1/antigravity-acp");
+  const t3File = () => join(t3Dir(), "antigravity-oauth-token");
+  /** What T3 Code's old Antigravity server signed in with. */
+  const t3Legacy = () => join(t3Dir(), "acp_token.json");
   const agyFile = () => join(home, ".gemini/antigravity-cli/antigravity-oauth-token");
   const holder = (path: string) => {
     const raw = JSON.parse(readFileSync(path, "utf8"));
@@ -183,8 +187,8 @@ describe("commands", () => {
     const accounts = [account("ana"), account("ben"), account("cleo", { grantedScopes: SCOPES.slice(0, 2) })];
     mkdirSync(join(home, ".agy-switch"), { recursive: true });
     writeFileSync(join(home, ".agy-switch/accounts.json"), JSON.stringify({ version: 1, accounts }));
-    mkdirSync(join(t3File(), ".."), { recursive: true });
-    writeFileSync(t3File(), JSON.stringify(accounts[0].acpToken));
+    mkdirSync(t3Dir(), { recursive: true });
+    writeFileSync(t3File(), JSON.stringify({ token: { refresh_token: "rt-ana" } }));
     printed = [];
     spyOn(console, "log").mockImplementation((line) => void printed.push(String(line)));
     spyOn(console, "error").mockImplementation((line) => void printed.push(String(line)));
@@ -222,6 +226,73 @@ describe("commands", () => {
     });
     expect(holder(t3File())).toBe("rt-ben");
     expect(holder(agyFile())).toBe("rt-ben");
+  });
+
+  test("switch signs T3 Code's Gemini runs in through the token file agy reads in its profile, even when there's none yet", async () => {
+    rmSync(t3File());
+    await main(["switch", "ben", "--target", "t3", "--json"]);
+    expect(JSON.parse(printed[0]).previous).toEqual({ t3: null });
+    expect(JSON.parse(readFileSync(t3File(), "utf8"))).toEqual({
+      token: { access_token: "", token_type: "Bearer", refresh_token: "rt-ben", expiry: expect.any(String) },
+      auth_method: "consumer",
+      id_token_email: "ben@example.com",
+    });
+    expect(statSync(t3File()).mode & 0o777).toBe(0o600);
+    // No acp_token.json made up, and no temporary file left behind.
+    expect(readdirSync(t3Dir())).toEqual(["antigravity-oauth-token"]);
+  });
+
+  test("switch keeps acp_token.json in step where T3 Code's old Antigravity server left one, and keeps the first sign-ins it replaces", async () => {
+    writeFileSync(t3Legacy(), JSON.stringify(account("ana").acpToken));
+    await main(["switch", "ben", "--target", "t3", "--json"]);
+    expect(holder(t3File())).toBe("rt-ben");
+    expect(JSON.parse(readFileSync(t3Legacy(), "utf8"))).toEqual(account("ben").acpToken);
+    expect(holder(`${t3File()}.bak`)).toBe("rt-ana");
+    expect(holder(`${t3Legacy()}.bak`)).toBe("rt-ana");
+  });
+
+  test("current reads T3 Code's account from the token file its Gemini runs read, not acp_token.json", async () => {
+    writeFileSync(t3Legacy(), JSON.stringify(account("ben").acpToken));
+    await main(["current", "--json"]);
+    expect(JSON.parse(printed[0]).t3).toBe("ana@example.com");
+  });
+
+  test("doctor fails while T3 Code's Gemini runs have no sign-in, and passes once switch writes one", async () => {
+    // What T3 Code 0.1.12 found: only the old server's acp_token.json, which agy doesn't read.
+    rmSync(t3File());
+    writeFileSync(t3Legacy(), JSON.stringify(account("ana").acpToken));
+    const t3Check = () => JSON.parse(printed.at(-1)!).checks.find((c: { name: string }) => c.name === "t3");
+
+    await main(["doctor", "--json"]);
+    expect(process.exitCode).toBe(1);
+    expect(t3Check()).toEqual({
+      name: "t3",
+      ok: false,
+      detail:
+        "Gemini runs can't sign in: ~/.t3/userdata/providers/antigravity/i1/antigravity-acp/antigravity-oauth-token holds no sign-in. " +
+        "Fix it with: agy-switch switch <account>",
+    });
+
+    await main(["switch", "ana", "--json"]);
+    await main(["doctor", "--json"]);
+    expect(t3Check()).toEqual({
+      name: "t3",
+      ok: true,
+      detail: "Uses ana@example.com (1 sign-in file under ~/.t3/userdata/providers/antigravity)",
+    });
+  });
+
+  test("switch without a T3 Code profile changes nothing and says how to make one", async () => {
+    rmSync(join(home, ".t3"), { recursive: true });
+    await main(["switch", "ben", "--json"]);
+    expect(process.exitCode).toBe(1);
+    expect(JSON.parse(printed[0]).error).toMatchObject({
+      code: "no_t3_signin",
+      message:
+        "Couldn't find T3 Code's Antigravity profile under ~/.t3/userdata/providers/antigravity. " +
+        "Use Antigravity in T3 Code once, then try again. Nothing was changed.",
+    });
+    expect(existsSync(agyFile())).toBe(false);
   });
 
   test.skipIf(!macOS)("switch --target agy writes the agy CLI's keychain item and its file, in the CLI's format", async () => {
@@ -368,7 +439,7 @@ describe("commands", () => {
     ]);
   });
 
-  test("ran-out image records the limit for the account the agy CLI uses, and pick --for image ranks it last", async () => {
+  test("ran-out image records the limit for the account in use, and pick --for image ranks it last", async () => {
     agyUses("ana");
     await main(["ran-out", "image", "--resets-in", "4h57m19.81s", "--json"]);
     const recorded = JSON.parse(printed[0]);
@@ -432,7 +503,7 @@ describe("commands", () => {
     expect(saved.quota.models.map((b: { name: string }) => b.name)).toEqual(["gemini-5h", "3p-5h"]);
   });
 
-  test("ran-out records the account it's given, and asks for one when the agy CLI uses an unsaved account", async () => {
+  test("ran-out records the account it's given, and asks for one when T3 Code and the agy CLI use different accounts", async () => {
     await main(["ran-out", "image", "ben", "--resets-in", "1h", "--json"]);
     expect(JSON.parse(printed[0]).account).toBe("ben@example.com");
     const accounts = JSON.parse(readFileSync(join(home, ".agy-switch/accounts.json"), "utf8")).accounts;
@@ -445,7 +516,10 @@ describe("commands", () => {
     agyUses("unsaved");
     await main(["ran-out", "image", "--resets-in", "1h", "--json"]);
     expect(process.exitCode).toBe(2);
-    expect(JSON.parse(printed[1]).error.message).toStartWith("The agy CLI isn't using a saved account.");
+    expect(JSON.parse(printed[1]).error.message).toBe(
+      "T3 Code uses ana@example.com and the agy CLI uses an account that isn't saved here. " +
+        "Name the account whose image call failed, such as: agy-switch ran-out image ana@example.com --resets-in 4h57m19s",
+    );
   });
 
   test("ran-out records only image generation, and needs the wait", async () => {

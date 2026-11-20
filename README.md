@@ -3,7 +3,7 @@
 # agy-switch
 
 Switch the Google Antigravity account that T3 Code and the `agy` CLI use, with
-one command. T3 Code runs Gemini through the agy CLI, so they share one sign-in.
+one command. T3 Code runs Gemini through the agy CLI, with a sign-in of its own.
 You can run it yourself or let an AI agent drive it.
 
 Switching by hand means signing in again in a browser and copying token files
@@ -15,8 +15,8 @@ agy-switch isn't affiliated with Google or T3 Code.
 
 ## Install
 
-You need [Bun](https://bun.sh), and T3 Code with its Antigravity provider signed
-in once.
+You need [Bun](https://bun.sh), and T3 Code with its Antigravity provider used
+once.
 
 ```sh
 git clone https://github.com/shahid0/agy-switch.git
@@ -43,7 +43,7 @@ agy-switch switch ben@example.com    # make T3 Code and the agy CLI use this acc
 | `pick [--for <model>] [--all]` | Ranks accounts by live quota left. Doesn't switch |
 | `quota [<account>]` | Reads live quota for one account, or all of them |
 | `switch <account> [--target t3\|agy\|both]` | Makes T3 Code and the agy CLI use the account. `--target t3` or `agy` switches only one |
-| `ran-out image [<account>] --resets-in <wait>` | Records that image generation ran out, which Google doesn't report. Default: the account the agy CLI uses |
+| `ran-out image [<account>] --resets-in <wait>` | Records that image generation ran out, which Google doesn't report. Default: the account T3 Code and the agy CLI use |
 | `add [--browser] [--timeout <seconds>]` | Signs in with Google and saves the account |
 | `remove <account>` | Deletes a saved account |
 | `doctor` | Checks your setup |
@@ -112,7 +112,7 @@ changes anything. To fix one, add it again with `agy-switch add`.
 | What | Where |
 | :-- | :-- |
 | Saved accounts and their sign-in tokens | `~/.agy-switch/accounts.json`, readable only by you (mode 0600) |
-| T3 Code sign-in | `~/.t3/userdata/providers/antigravity/*/antigravity-acp/acp_token.json` |
+| T3 Code sign-in, which its Gemini runs read | `~/.t3/userdata/providers/antigravity/*/antigravity-acp/antigravity-oauth-token`. T3 Code runs agy with its own profile and keeps this sign-in in a file, not the keychain. Where T3 Code's old Antigravity server left an `acp_token.json` beside it, agy-switch keeps that in step too |
 | agy CLI sign-in | On macOS, the keychain item `gemini` / `antigravity`, which the CLI reads first. Then `~/.gemini/antigravity-cli/antigravity-oauth-token` |
 
 The first time agy-switch writes over a sign-in file, it keeps the old one beside

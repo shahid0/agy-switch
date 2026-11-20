@@ -14,7 +14,7 @@ import {
   upsertAccount,
   type Account,
 } from "../src/store.ts";
-import { activeAccounts, findAcpTokenPaths } from "../src/write.ts";
+import { activeAccounts, findT3AgyDirs } from "../src/write.ts";
 
 // Paths resolve on access, so pointing HOME at a temp dir sandboxes every test.
 const HOME = mkdtempSync(join(tmpdir(), "agy-switch-store-"));
@@ -172,7 +172,7 @@ describe("remove and markUsed", () => {
 describe("write targets", () => {
   test("does not invent T3 or agy files that are not there", () => {
     process.env.HOME = mkdtempSync(join(tmpdir(), "agy-targets-"));
-    expect(findAcpTokenPaths()).toEqual([]);
+    expect(findT3AgyDirs()).toEqual([]);
     expect(activeAccounts([base()])).toEqual({ t3: null, agy: null });
   });
 
@@ -181,7 +181,7 @@ describe("write targets", () => {
     process.env.HOME = home;
     const acp = join(home, ".t3/userdata/providers/antigravity/i1/antigravity-acp");
     mkdirSync(acp, { recursive: true });
-    writeFileSync(join(acp, "acp_token.json"), JSON.stringify({ refresh_token: "rt" }));
+    writeFileSync(join(acp, "antigravity-oauth-token"), JSON.stringify({ token: { refresh_token: "rt" } }));
     const agy = join(home, ".gemini/antigravity-cli");
     mkdirSync(agy, { recursive: true });
     writeFileSync(join(agy, "antigravity-oauth-token"), JSON.stringify({ token: { refresh_token: "someone-else" } }));

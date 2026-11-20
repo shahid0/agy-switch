@@ -17,9 +17,11 @@ export const tildify = (path: string) => (path.startsWith(home()) ? `~${path.sli
 export const storeDir = () => join(home(), ".agy-switch");
 export const storePath = () => join(storeDir(), "accounts.json");
 
+/** The name of the agy CLI's token file, in whichever folder it keeps its data. */
+const AGY_TOKEN_FILE = "antigravity-oauth-token";
+
 /** The `agy` CLI's token file. It reads this when its keychain item holds no sign-in. */
-export const agyTokenPath = () =>
-  join(home(), ".gemini", "antigravity-cli", "antigravity-oauth-token");
+export const agyTokenPath = () => join(home(), ".gemini", "antigravity-cli", AGY_TOKEN_FILE);
 
 /** The `agy` CLI's sign-in in the macOS keychain, which it reads before its token file. */
 export const AGY_KEYCHAIN = { service: "gemini", account: "antigravity" } as const;
@@ -27,8 +29,22 @@ export const AGY_KEYCHAIN = { service: "gemini", account: "antigravity" } as con
 /** The first keychain sign-in agy-switch wrote over that isn't a saved account, such as the agy CLI's own login. */
 export const agyKeychainBackupPath = () => join(storeDir(), "agy-cli-keychain.bak");
 
-/** Where T3 Code keeps antigravity ACP provider state (one dir per instance). */
+/** Where T3 Code keeps a profile for each Antigravity provider it has set up. */
 export const t3AcpRoot = () => join(home(), ".t3", "userdata", "providers", "antigravity");
+
+/**
+ * T3 Code runs `agy acp --gemini-dir <profile> --app-data-dir antigravity-acp`
+ * and sets SSH_CONNECTION, so agy skips the keychain and keeps the sign-in in
+ * this folder's token file. Seen in T3 Code 0.1.12-nightly, 2026-11-20.
+ */
+export const t3AgyDir = (profile: string) => join(profile, "antigravity-acp");
+export const t3AgyTokenPath = (agyDir: string) => join(agyDir, AGY_TOKEN_FILE);
+
+/**
+ * T3 Code's old Antigravity server kept its sign-in here. T3 Code still reads
+ * it, before the token file, for the limits it shows.
+ */
+export const t3LegacyTokenPath = (agyDir: string) => join(agyDir, "acp_token.json");
 
 /**
  * The bundled ACP harness T3 installs. It drives the Google PKCE flow and
