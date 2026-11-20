@@ -494,7 +494,7 @@ function cmdSwitch({ args, flags }: Parsed) {
   for (const t of targets) {
     const app = appNames([t]);
     const was = previous[t];
-    if (was === account.email) console.log(`${app} already uses ${account.email}.`);
+    if (was === account.email) console.log(`${app[0].toUpperCase()}${app.slice(1)} already uses ${account.email}.`);
     else if (was) console.log(`Switched ${app} from ${was} to ${account.email}.`);
     else console.log(`Switched ${app} to ${account.email}. It wasn't using a saved account before.`);
   }
