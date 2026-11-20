@@ -60,8 +60,8 @@ Plain, exact, calm. Never cute, never alarmed, never salesy.
 | Rule | The line |
 | :-- | :-- |
 | When to switch | Switch on your own, without asking, when the account in use doesn't have the quota for the work ahead. |
-| Running sessions | Sessions already running keep the account they started with. |
-| After a switch | Sessions started after a switch use the new account. |
+| Running sessions | Sessions already running keep the account they started with. When one refreshes its sign-in, within the hour, it writes that account back. |
+| After a switch | Before each batch, check agy-switch current, and switch again if it changed back. |
 | Which quota to rank by | Rank by the quota your runs use: --for hydrogen for Hydrogen runs, --for argon for Argon runs, --for image for image generation, --for claude for Claude runs. |
 | After an image call fails on quota | When an image call fails on quota, record it with agy-switch ran-out image --resets-in <wait>, then switch. |
 | Fixing an account | Run agy-switch add and approve every permission. |

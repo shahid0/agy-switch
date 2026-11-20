@@ -488,7 +488,11 @@ function cmdSwitch({ args, flags }: Parsed) {
   markUsed(account.id);
 
   const previous = Object.fromEntries(targets.map((t) => [t, before[t as "t3" | "agy"]]));
-  const note = "Sessions already running keep the account they started with.";
+  // The agy CLI saves each refreshed sign-in over whatever the keychain holds, so a session that
+  // was running before the switch writes its account back. Tested 2026-11-20, with and without writer_id.
+  const note =
+    "Sessions already running keep the account they started with. When one refreshes its sign-in, within the hour, it writes that account back. " +
+    "Before each batch, check agy-switch current, and switch again if it changed back.";
   if (flags.json) return printJson({ switchedTo: account.email, target, previous, note });
 
   for (const t of targets) {

@@ -11,7 +11,9 @@ Switch on your own, without asking, when the account in use doesn't have the
 quota for the work ahead.
 
 You can switch in the middle of a batch too. Sessions already running keep the
-account they started with. Sessions started after a switch use the new account.
+account they started with. When one refreshes its sign-in, within the hour, it
+writes that account back. Before each batch, check agy-switch current, and
+switch again if it changed back.
 
 Rank by the quota your runs use: `--for hydrogen` for Hydrogen runs,
 `--for argon` for Argon runs, `--for image` for image generation, `--for claude`
@@ -135,7 +137,7 @@ $ agy-switch switch ben@example.com --json
   "switchedTo": "ben@example.com",
   "target": "both",
   "previous": {"t3": "dev@example.com", "agy": "dev@example.com"},
-  "note": "Sessions already running keep the account they started with."
+  "note": "Sessions already running keep the account they started with. When one refreshes its sign-in, within the hour, it writes that account back. Before each batch, check agy-switch current, and switch again if it changed back."
 }
 ```
 
@@ -233,9 +235,11 @@ different account without saying so.
 
 ## Don't assume
 
-- **That a switch reaches sessions already running.** Sessions already running
-  keep the account they started with, in T3 Code and in the agy CLI. Sessions
-  started after a switch use the new account.
+- **That a switch stays.** Sessions already running keep the account they
+  started with. When one refreshes its sign-in, within the hour, it writes that
+  account back, and sessions started after that use it again. The agy CLI does
+  this, and no switch can prevent it. Before each batch, check agy-switch
+  current, and switch again if it changed back.
 - **That every account can run agents.** Check `canRunAgents`.
 - **That Google reports every limit.** It doesn't report image generation's own
   limit. See Which `--for` to use.
