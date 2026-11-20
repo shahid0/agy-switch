@@ -1,8 +1,9 @@
 # agy-switch for AI agents
 
-agy-switch switches the Google Antigravity account that T3 Code uses, and the
-`agy` CLI if asked. It's there so you can keep working without the user,
-overnight too, when an account runs low on quota.
+agy-switch switches the Google Antigravity account that T3 Code and the `agy`
+CLI use. T3 Code runs Gemini through the agy CLI, so they share one sign-in.
+It's there so you can keep working without the user, overnight too, when an
+account runs low on quota.
 
 ## When to switch
 
@@ -18,7 +19,7 @@ for Claude runs.
 
 1. Before a batch of runs, check the quota they use:
    `agy-switch pick --for <model> --json`.
-2. If the account in use (`active.t3: true`) can't cover the batch, switch to
+2. If the account in use (`active.agy: true`) can't cover the batch, switch to
    the best candidate before you start (see Switch).
 3. If it runs low partway through, switch before you start the next run.
 4. If a run still stops on a quota limit, switch and run it again. When an
@@ -38,8 +39,7 @@ terminal, the JSON comes on one line.
 | Find the account with the most quota | `agy-switch pick --json` |
 | Find the account with the most quota for one kind of run | `agy-switch pick --for hydrogen --json` |
 | See quota on every account | `agy-switch quota --json` |
-| Switch T3 Code | `agy-switch switch <email> --json` |
-| Switch T3 Code and the agy CLI | `agy-switch switch <email> --target both --json` |
+| Switch T3 Code and the agy CLI | `agy-switch switch <email> --json` |
 | Record that image generation ran out | `agy-switch ran-out image --resets-in <wait> --json` |
 | List saved accounts with live quota | `agy-switch list --json` |
 
@@ -50,10 +50,12 @@ in `list`. Prefer the full email: it can't match two accounts.
 
 ```sh
 $ agy-switch current --json
-{"t3": "dev@example.com", "agy": null}
+{"t3": "dev@example.com", "agy": "dev@example.com"}
 ```
 
-`null` means that app isn't using any saved account.
+`agy` is the account Gemini runs use, T3 Code's included. `t3` is the account
+in T3 Code's own sign-in files. `null` means that sign-in isn't any saved
+account.
 
 ## Which account has the most quota?
 
@@ -108,8 +110,8 @@ limit in about 5 minutes while its Gemini Models group still had 36% left.
 When an image call fails on quota, record it with
 `agy-switch ran-out image --resets-in <wait>`, then switch. `<wait>` is the
 error's `quotaResetDelay`, or the time in "Your quota will reset after
-4h57m19s". Run it before you switch: it records the account T3 Code uses, or
-the account you name after `image`.
+4h57m19s". Run it before you switch: it records the account the agy CLI uses,
+or the account you name after `image`.
 
 ```sh
 $ agy-switch ran-out image --resets-in 4h57m19s --json
@@ -131,14 +133,15 @@ images again.
 $ agy-switch switch ben@example.com --json
 {
   "switchedTo": "ben@example.com",
-  "target": "t3",
-  "previous": {"t3": "dev@example.com"},
+  "target": "both",
+  "previous": {"t3": "dev@example.com", "agy": "dev@example.com"},
   "note": "Sessions already running keep the account they started with."
 }
 ```
 
-- The default target is `t3`, which is T3 Code. `--target agy` switches the agy
-  CLI, and `--target both` switches both.
+- The default target is `both`: the agy CLI, which every Gemini run uses, and
+  T3 Code's own sign-in files. `--target agy` or `--target t3` switches only
+  one.
 - `switch` refuses an account that can't run agents in T3 Code before it writes
   anything.
 
@@ -248,5 +251,5 @@ different account without saying so.
 | Saved accounts | `~/.agy-switch/accounts.json`, mode 0600 |
 | T3 Code sign-in | `~/.t3/userdata/providers/antigravity/*/antigravity-acp/acp_token.json` |
 | agy CLI sign-in | On macOS, the keychain item `gemini`/`antigravity`, read first. Then `~/.gemini/antigravity-cli/antigravity-oauth-token` |
-| The agy CLI sign-in agy-switch first wrote over | `~/.agy-switch/agy-cli-keychain.bak`, mode 0600 |
+| The first agy CLI sign-in agy-switch wrote over that isn't a saved account, such as the CLI's own login | `~/.agy-switch/agy-cli-keychain.bak`, mode 0600 |
 | What `add` signs in with | The Antigravity server bundled with T3 Code, or the file in `AGY_SWITCH_HARNESS` |

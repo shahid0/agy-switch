@@ -20,8 +20,8 @@ import {
 } from "./store.ts";
 import { activeAccounts, findAcpTokenPaths, openInBrowser, writeAcp, writeAgy } from "./write.ts";
 
-const HELP = `agy-switch switches the Google Antigravity account that T3 Code uses,
-and the agy CLI if you want.
+const HELP = `agy-switch switches the Google Antigravity account that T3 Code and the
+agy CLI use. T3 Code runs Gemini through the agy CLI.
 
 Commands
   current                   Which account T3 Code and the agy CLI use now
@@ -29,10 +29,10 @@ Commands
   pick [--for <model>]      Rank accounts by live quota left. Doesn't switch
   quota [<account>]         Live quota for one account, or all of them
   switch <account> [--target t3|agy|both]
-                            Use this account. Default target: t3 (T3 Code)
+                            Use this account. Default target: both
   ran-out image [<account>] --resets-in <wait>
                             Record that image generation ran out, which Google
-                            doesn't report. Default: the account T3 Code uses
+                            doesn't report. Default: the account the agy CLI uses
   add [--browser]           Sign in with Google and save the account
   remove <account>          Delete a saved account
   doctor                    Check your setup
@@ -385,7 +385,7 @@ async function cmdPick({ flags }: Parsed) {
           ? `couldn't read quota: ${c.quotaError}`
           : "Google reported no quota for this group"
         : `${c.shown}${c.resetsAt && c.quotaLeft < 100 ? `, resets in ${span(c.resetsAt)}` : ""}`,
-      [c.active.t3 && "in use by T3 Code", "canRunAgents" in c && !c.canRunAgents && "can't run agents"]
+      [c.active.agy && "in use", "canRunAgents" in c && !c.canRunAgents && "can't run agents"]
         .filter(Boolean)
         .join(", "),
     ]),
@@ -453,7 +453,7 @@ async function cmdQuota({ args, flags }: Parsed) {
 
 function cmdSwitch({ args, flags }: Parsed) {
   if (!args[0]) throw usage("switch needs an account, such as: agy-switch switch you@example.com");
-  const target = flags.target ?? "t3";
+  const target = flags.target ?? "both";
   if (target !== "t3" && target !== "agy" && target !== "both") throw usage("--target must be t3, agy or both.");
 
   const accounts = readAccounts();
@@ -483,7 +483,7 @@ function cmdSwitch({ args, flags }: Parsed) {
 
   const before = activeAccounts(accounts);
   // The agy CLI first: its keychain write can fail, and then nothing was changed.
-  if (targets.includes("agy")) writeAgy(account);
+  if (targets.includes("agy")) writeAgy(account, accounts);
   if (targets.includes("t3")) writeAcp(account, t3Paths);
   markUsed(account.id);
 
@@ -521,9 +521,10 @@ function cmdRanOut({ args, flags }: Parsed) {
   if (!wait) throw usage("--resets-in takes the wait from the failed call, such as --resets-in 4h57m19s.");
 
   const accounts = readAccounts();
-  const ref = args[1] ?? activeAccounts(accounts).t3;
+  // Image runs go through the agy CLI, T3 Code's included, so its account is the one that ran out.
+  const ref = args[1] ?? activeAccounts(accounts).agy;
   if (!ref) {
-    throw usage("T3 Code isn't using a saved account. Name the account, such as: agy-switch ran-out image you@example.com --resets-in 4h57m19s");
+    throw usage("The agy CLI isn't using a saved account. Name the account, such as: agy-switch ran-out image you@example.com --resets-in 4h57m19s");
   }
   const account = resolveAccount(ref, accounts);
   const resetsAt = new Date(Date.now() + wait).toISOString();
@@ -642,7 +643,7 @@ function cmdDoctor({ flags }: Parsed) {
       ok: true,
       detail: active.agy
         ? `Uses ${active.agy} (${process.platform === "darwin" ? "keychain, then " : ""}${tildify(agyTokenPath())})`
-        : "Not using a saved account. Optional: switch --target agy sets it",
+        : "Not using a saved account. Switch it with: agy-switch switch <account>",
     },
   ];
   const ok = checks.every((c) => c.ok);

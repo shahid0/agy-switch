@@ -27,8 +27,8 @@ Plain, exact, calm. Never cute, never alarmed, never salesy.
 | saved accounts | account store | The accounts in ~/.agy-switch/accounts.json |
 | can run agents | ACP-eligible | The account's sign-in granted the aicode permission. JSON: `canRunAgents` |
 | permission | grant | What a person approves at Google sign-in. Developer docs and JSON may say scope |
-| T3 Code | T3 ACP, ACP provider, surface | The app. Its target name is `t3` |
-| the agy CLI | surface | The other app. Its target name is `agy` |
+| T3 Code | T3 ACP, ACP provider, surface | The app. It runs Gemini through the agy CLI. Target `t3` is its own sign-in files |
+| the agy CLI | surface | The other app, which every Gemini run uses. Its target name is `agy` |
 | keychain | keyring | The macOS keychain, where the agy CLI keeps its sign-in. Developer docs may name the item: `gemini`/`antigravity` |
 | quota left | score, headroom | Percent left on a limit |
 | tightest limit | worst bucket | The limit that runs out first |

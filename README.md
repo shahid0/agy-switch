@@ -2,8 +2,9 @@
 
 # agy-switch
 
-Switch the Google Antigravity account that T3 Code uses, and the `agy` CLI if
-you want, with one command. You can run it yourself or let an AI agent drive it.
+Switch the Google Antigravity account that T3 Code and the `agy` CLI use, with
+one command. T3 Code runs Gemini through the agy CLI, so they share one sign-in.
+You can run it yourself or let an AI agent drive it.
 
 Switching by hand means signing in again in a browser and copying token files
 between folders. agy-switch keeps your accounts, reads their quota from Google,
@@ -30,7 +31,7 @@ agy-switch doctor
 agy-switch add                       # sign in with Google and save the account
 agy-switch list                      # saved accounts and their quota
 agy-switch pick                      # rank accounts by live quota
-agy-switch switch ben@example.com    # make T3 Code use this account
+agy-switch switch ben@example.com    # make T3 Code and the agy CLI use this account
 ```
 
 ## Commands
@@ -41,8 +42,8 @@ agy-switch switch ben@example.com    # make T3 Code use this account
 | `list` | Lists saved accounts, their live quota left, and which can run agents |
 | `pick [--for <model>] [--all]` | Ranks accounts by live quota left. Doesn't switch |
 | `quota [<account>]` | Reads live quota for one account, or all of them |
-| `switch <account> [--target t3\|agy\|both]` | Makes T3 Code use the account, or the agy CLI, or both |
-| `ran-out image [<account>] --resets-in <wait>` | Records that image generation ran out, which Google doesn't report. Default: the account T3 Code uses |
+| `switch <account> [--target t3\|agy\|both]` | Makes T3 Code and the agy CLI use the account. `--target t3` or `agy` switches only one |
+| `ran-out image [<account>] --resets-in <wait>` | Records that image generation ran out, which Google doesn't report. Default: the account the agy CLI uses |
 | `add [--browser] [--timeout <seconds>]` | Signs in with Google and saves the account |
 | `remove <account>` | Deletes a saved account |
 | `doctor` | Checks your setup |
@@ -115,9 +116,9 @@ changes anything. To fix one, add it again with `agy-switch add`.
 | agy CLI sign-in | On macOS, the keychain item `gemini` / `antigravity`, which the CLI reads first. Then `~/.gemini/antigravity-cli/antigravity-oauth-token` |
 
 The first time agy-switch writes over a sign-in file, it keeps the old one beside
-it with a `.bak` ending. The first time it writes over the agy CLI's keychain
-sign-in, such as the CLI's own login, it keeps the old one in
-`~/.agy-switch/agy-cli-keychain.bak`, readable only by you. To put that one back:
+it with a `.bak` ending. The first time it writes over a keychain sign-in that
+isn't one of your saved accounts, such as the agy CLI's own login, it keeps that
+one in `~/.agy-switch/agy-cli-keychain.bak`, readable only by you. To put it back:
 
 ```sh
 printf 'add-generic-password -U -s gemini -a antigravity -w %s\n' "$(cat ~/.agy-switch/agy-cli-keychain.bak)" | security -i

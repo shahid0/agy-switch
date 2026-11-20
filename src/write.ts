@@ -28,14 +28,22 @@ function readJson<T>(path: string): T | null {
   }
 }
 
+/** The agy CLI's sign-in in a keychain value, or null when the value isn't one. */
+function decodeAgySignIn(value: string): AgySignIn | null {
+  try {
+    const json = value.startsWith(GO_KEYRING) ? Buffer.from(value.slice(GO_KEYRING.length), "base64").toString("utf8") : value;
+    return JSON.parse(json) as AgySignIn;
+  } catch {
+    return null;
+  }
+}
+
 /** The agy CLI's keychain sign-in, or null when there's none or the keychain can't be read. */
 function readAgyKeychain(): AgySignIn | null {
   if (process.platform !== "darwin") return null;
   try {
     const value = readKeychain(AGY_KEYCHAIN.service, AGY_KEYCHAIN.account);
-    if (value === null) return null;
-    const json = value.startsWith(GO_KEYRING) ? Buffer.from(value.slice(GO_KEYRING.length), "base64").toString("utf8") : value;
-    return JSON.parse(json) as AgySignIn;
+    return value === null ? null : decodeAgySignIn(value);
   } catch {
     // The agy CLI falls back to its file when it can't read the keychain, and so does this.
     return null;
@@ -78,7 +86,7 @@ export function writeAcp(account: Account, paths: string[]): void {
  * format: its keychain item on macOS, then its token file. The keychain goes
  * first because it's the write that can fail, and then nothing was changed.
  */
-export function writeAgy(account: Account): void {
+export function writeAgy(account: Account, saved: Account[]): void {
   const signIn = JSON.stringify({
     token: {
       access_token: account.accessToken ?? "",
@@ -93,10 +101,15 @@ export function writeAgy(account: Account): void {
   if (process.platform === "darwin") {
     const { service, account: user } = AGY_KEYCHAIN;
     try {
-      // Keep the first sign-in this replaces, like backupOnce does for files.
+      // Keep the first sign-in this replaces that isn't a saved account, such as
+      // the CLI's own login, like backupOnce does for files. A saved one can be
+      // switched back to.
       const replaced = readKeychain(service, user);
+      const holder = replaced === null ? undefined : decodeAgySignIn(replaced)?.token?.refresh_token;
       const bak = agyKeychainBackupPath();
-      if (replaced !== null && !existsSync(bak)) writeFileSync(bak, replaced, { mode: 0o600 });
+      if (replaced !== null && !saved.some((a) => a.acpToken.refresh_token === holder) && !existsSync(bak)) {
+        writeFileSync(bak, replaced, { mode: 0o600 });
+      }
       writeKeychain(service, user, GO_KEYRING + Buffer.from(signIn).toString("base64"));
     } catch (err) {
       throw new Error(

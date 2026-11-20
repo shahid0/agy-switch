@@ -163,6 +163,11 @@ describe("commands", () => {
     const raw = JSON.parse(readFileSync(path, "utf8"));
     return raw.refresh_token ?? raw.token?.refresh_token;
   };
+  /** Sign the agy CLI in through its file, as the account `key`, or as no saved account. */
+  const agyUses = (key: string) => {
+    mkdirSync(join(agyFile(), ".."), { recursive: true });
+    writeFileSync(agyFile(), JSON.stringify({ token: { refresh_token: `rt-${key}` } }));
+  };
   const goKeyring = (json: unknown) => `go-keyring-base64:${Buffer.from(JSON.stringify(json)).toString("base64")}`;
   /** The agy CLI's keychain sign-in, decoded the way go-keyring stores it. */
   const agyKeychain = () => {
@@ -197,6 +202,17 @@ describe("commands", () => {
     expect(holder(t3File())).toBe("rt-ana");
   });
 
+  test("switch writes T3 Code and the agy CLI unless --target names one", async () => {
+    await main(["switch", "ben", "--json"]);
+    expect(JSON.parse(printed[0])).toMatchObject({ switchedTo: "ben@example.com", target: "both" });
+    expect(holder(t3File())).toBe("rt-ben");
+    expect(holder(agyFile())).toBe("rt-ben");
+
+    await main(["switch", "ana", "--target", "t3", "--json"]);
+    expect(holder(t3File())).toBe("rt-ana");
+    expect(holder(agyFile())).toBe("rt-ben");
+  });
+
   test("--target both writes T3 Code and the agy CLI, and reports what each used before", async () => {
     await main(["switch", "ben", "--target", "both", "--json"]);
     expect(JSON.parse(printed[0])).toMatchObject({
@@ -220,9 +236,8 @@ describe("commands", () => {
     expect(holder(t3File())).toBe("rt-ana");
   });
 
-  test.skipIf(!macOS)("current reads the agy CLI's keychain before its file, and switch keeps the first sign-in it replaces", async () => {
-    mkdirSync(join(agyFile(), ".."), { recursive: true });
-    writeFileSync(agyFile(), JSON.stringify({ token: { refresh_token: "rt-ana" } }));
+  test.skipIf(!macOS)("current reads the agy CLI's keychain before its file, and switch keeps the first unsaved sign-in it replaces", async () => {
+    agyUses("ana");
     await main(["current", "--json"]);
     expect(JSON.parse(printed[0]).agy).toBe("ana@example.com");
 
@@ -242,6 +257,13 @@ describe("commands", () => {
     const bak = join(home, ".agy-switch/agy-cli-keychain.bak");
     expect(readFileSync(bak, "utf8")).toBe(ownLogin);
     expect(statSync(bak).mode & 0o777).toBe(0o600);
+  });
+
+  test.skipIf(!macOS)("switch keeps no copy of a saved account's keychain sign-in", async () => {
+    await main(["switch", "ben", "--target", "agy", "--json"]);
+    await main(["switch", "ana", "--target", "agy", "--json"]);
+    expect(JSON.parse(printed[1]).previous).toEqual({ agy: "ben@example.com" });
+    expect(existsSync(join(home, ".agy-switch/agy-cli-keychain.bak"))).toBe(false);
   });
 
   test.skipIf(!macOS)("a switch the keychain refuses changes nothing", async () => {
@@ -346,7 +368,8 @@ describe("commands", () => {
     ]);
   });
 
-  test("ran-out image records the limit for the account T3 Code uses, and pick --for image ranks it last", async () => {
+  test("ran-out image records the limit for the account the agy CLI uses, and pick --for image ranks it last", async () => {
+    agyUses("ana");
     await main(["ran-out", "image", "--resets-in", "4h57m19.81s", "--json"]);
     const recorded = JSON.parse(printed[0]);
     expect(recorded).toMatchObject({ ranOut: "Image generation", account: "ana@example.com" });
@@ -399,6 +422,7 @@ describe("commands", () => {
   });
 
   test("a recorded image limit stays out of list and the saved snapshot", async () => {
+    agyUses("ana");
     await main(["ran-out", "image", "--resets-in", "2h", "--json"]);
     printed = [];
     fakeGoogle({ ana: 0.5, ben: 0.6 });
@@ -408,7 +432,7 @@ describe("commands", () => {
     expect(saved.quota.models.map((b: { name: string }) => b.name)).toEqual(["gemini-5h", "3p-5h"]);
   });
 
-  test("ran-out records the account it's given, and asks for one when T3 Code uses an unsaved account", async () => {
+  test("ran-out records the account it's given, and asks for one when the agy CLI uses an unsaved account", async () => {
     await main(["ran-out", "image", "ben", "--resets-in", "1h", "--json"]);
     expect(JSON.parse(printed[0]).account).toBe("ben@example.com");
     const accounts = JSON.parse(readFileSync(join(home, ".agy-switch/accounts.json"), "utf8")).accounts;
@@ -418,10 +442,10 @@ describe("commands", () => {
       ["cleo@example.com", false],
     ]);
 
-    writeFileSync(t3File(), JSON.stringify({ ...accounts[0].acpToken, refresh_token: "rt-unsaved" }));
+    agyUses("unsaved");
     await main(["ran-out", "image", "--resets-in", "1h", "--json"]);
     expect(process.exitCode).toBe(2);
-    expect(JSON.parse(printed[1]).error.message).toStartWith("T3 Code isn't using a saved account.");
+    expect(JSON.parse(printed[1]).error.message).toStartWith("The agy CLI isn't using a saved account.");
   });
 
   test("ran-out records only image generation, and needs the wait", async () => {
