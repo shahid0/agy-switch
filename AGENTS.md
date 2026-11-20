@@ -237,7 +237,9 @@ different account without saying so.
 - **That Google reports every limit.** It doesn't report image generation's own
   limit. See Which `--for` to use.
 - **That editing the files works the same.** Use the commands. The account file
-  is written atomically, and a hand edit skips every check.
+  is written atomically, and a hand edit skips every check. On macOS the agy CLI
+  reads its keychain item before its file, so editing the file alone changes
+  nothing.
 
 ## Files
 
@@ -245,5 +247,6 @@ different account without saying so.
 | :-- | :-- |
 | Saved accounts | `~/.agy-switch/accounts.json`, mode 0600 |
 | T3 Code sign-in | `~/.t3/userdata/providers/antigravity/*/antigravity-acp/acp_token.json` |
-| agy CLI sign-in | `~/.gemini/antigravity-cli/antigravity-oauth-token` |
+| agy CLI sign-in | On macOS, the keychain item `gemini`/`antigravity`, read first. Then `~/.gemini/antigravity-cli/antigravity-oauth-token` |
+| The agy CLI sign-in agy-switch first wrote over | `~/.agy-switch/agy-cli-keychain.bak`, mode 0600 |
 | What `add` signs in with | The Antigravity server bundled with T3 Code, or the file in `AGY_SWITCH_HARNESS` |

@@ -17,9 +17,15 @@ export const tildify = (path: string) => (path.startsWith(home()) ? `~${path.sli
 export const storeDir = () => join(home(), ".agy-switch");
 export const storePath = () => join(storeDir(), "accounts.json");
 
-/** Where the `agy` CLI keeps its credentials. */
+/** The `agy` CLI's token file. It reads this when its keychain item holds no sign-in. */
 export const agyTokenPath = () =>
   join(home(), ".gemini", "antigravity-cli", "antigravity-oauth-token");
+
+/** The `agy` CLI's sign-in in the macOS keychain, which it reads before its token file. */
+export const AGY_KEYCHAIN = { service: "gemini", account: "antigravity" } as const;
+
+/** The keychain sign-in agy-switch first wrote over, such as the agy CLI's own login. */
+export const agyKeychainBackupPath = () => join(storeDir(), "agy-cli-keychain.bak");
 
 /** Where T3 Code keeps antigravity ACP provider state (one dir per instance). */
 export const t3AcpRoot = () => join(home(), ".t3", "userdata", "providers", "antigravity");

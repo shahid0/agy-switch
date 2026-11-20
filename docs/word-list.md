@@ -29,6 +29,7 @@ Plain, exact, calm. Never cute, never alarmed, never salesy.
 | permission | grant | What a person approves at Google sign-in. Developer docs and JSON may say scope |
 | T3 Code | T3 ACP, ACP provider, surface | The app. Its target name is `t3` |
 | the agy CLI | surface | The other app. Its target name is `agy` |
+| keychain | keyring | The macOS keychain, where the agy CLI keeps its sign-in. Developer docs may name the item: `gemini`/`antigravity` |
 | quota left | score, headroom | Percent left on a limit |
 | tightest limit | worst bucket | The limit that runs out first |
 | model group | bucket | Models that share limits, named by Google, such as Claude and GPT models. Image generation is agy-switch's name for the image models |

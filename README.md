@@ -112,10 +112,19 @@ changes anything. To fix one, add it again with `agy-switch add`.
 | :-- | :-- |
 | Saved accounts and their sign-in tokens | `~/.agy-switch/accounts.json`, readable only by you (mode 0600) |
 | T3 Code sign-in | `~/.t3/userdata/providers/antigravity/*/antigravity-acp/acp_token.json` |
-| agy CLI sign-in | `~/.gemini/antigravity-cli/antigravity-oauth-token` |
+| agy CLI sign-in | On macOS, the keychain item `gemini` / `antigravity`, which the CLI reads first. Then `~/.gemini/antigravity-cli/antigravity-oauth-token` |
 
 The first time agy-switch writes over a sign-in file, it keeps the old one beside
-it with a `.bak` ending.
+it with a `.bak` ending. The first time it writes over the agy CLI's keychain
+sign-in, such as the CLI's own login, it keeps the old one in
+`~/.agy-switch/agy-cli-keychain.bak`, readable only by you. To put that one back:
+
+```sh
+printf 'add-generic-password -U -s gemini -a antigravity -w %s\n' "$(cat ~/.agy-switch/agy-cli-keychain.bak)" | security -i
+```
+
+Like the agy CLI, agy-switch sends the sign-in to `security` on stdin, so it never
+shows in the process list.
 
 agy-switch connects only to Google, for sign-in, account details and quota.
 Quota comes from Google's internal Antigravity endpoints, which can change
@@ -137,7 +146,9 @@ bun test
 bun run typecheck
 ```
 
-Tests set `HOME` to a temporary folder, so they don't touch your real accounts.
+Tests set `HOME` to a temporary folder with a keychain of its own, so they don't
+touch your real accounts or your keychain. Each test that writes checks first
+that agy-switch reads that keychain, and stops if it doesn't.
 
 ## License
 

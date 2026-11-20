@@ -482,8 +482,9 @@ function cmdSwitch({ args, flags }: Parsed) {
   }
 
   const before = activeAccounts(accounts);
-  if (targets.includes("t3")) writeAcp(account, t3Paths);
+  // The agy CLI first: its keychain write can fail, and then nothing was changed.
   if (targets.includes("agy")) writeAgy(account);
+  if (targets.includes("t3")) writeAcp(account, t3Paths);
   markUsed(account.id);
 
   const previous = Object.fromEntries(targets.map((t) => [t, before[t as "t3" | "agy"]]));
@@ -640,7 +641,7 @@ function cmdDoctor({ flags }: Parsed) {
       name: "agy",
       ok: true,
       detail: active.agy
-        ? `Uses ${active.agy} (${tildify(agyTokenPath())})`
+        ? `Uses ${active.agy} (${process.platform === "darwin" ? "keychain, then " : ""}${tildify(agyTokenPath())})`
         : "Not using a saved account. Optional: switch --target agy sets it",
     },
   ];

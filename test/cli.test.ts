@@ -1,9 +1,13 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { main, parseArgs, parseWait, resolveAccount } from "../src/cli.ts";
+import { readKeychain, writeKeychain } from "../src/keychain.ts";
 import type { Account } from "../src/store.ts";
+import { ownKeychain } from "./keychain.ts";
+
+const macOS = process.platform === "darwin";
 
 const SCOPES = [
   "https://www.googleapis.com/auth/cloud-platform",
@@ -159,10 +163,18 @@ describe("commands", () => {
     const raw = JSON.parse(readFileSync(path, "utf8"));
     return raw.refresh_token ?? raw.token?.refresh_token;
   };
+  const goKeyring = (json: unknown) => `go-keyring-base64:${Buffer.from(JSON.stringify(json)).toString("base64")}`;
+  /** The agy CLI's keychain sign-in, decoded the way go-keyring stores it. */
+  const agyKeychain = () => {
+    const value = readKeychain("gemini", "antigravity");
+    expect(value).toStartWith("go-keyring-base64:");
+    return JSON.parse(Buffer.from(value!.slice("go-keyring-base64:".length), "base64").toString("utf8"));
+  };
 
   beforeEach(() => {
     home = mkdtempSync(join(tmpdir(), "agy-switch-cli-"));
     process.env.HOME = home;
+    if (macOS) ownKeychain(home);
     const accounts = [account("ana"), account("ben"), account("cleo", { grantedScopes: SCOPES.slice(0, 2) })];
     mkdirSync(join(home, ".agy-switch"), { recursive: true });
     writeFileSync(join(home, ".agy-switch/accounts.json"), JSON.stringify({ version: 1, accounts }));
@@ -194,6 +206,57 @@ describe("commands", () => {
     });
     expect(holder(t3File())).toBe("rt-ben");
     expect(holder(agyFile())).toBe("rt-ben");
+  });
+
+  test.skipIf(!macOS)("switch --target agy writes the agy CLI's keychain item and its file, in the CLI's format", async () => {
+    await main(["switch", "ben", "--target", "agy", "--json"]);
+    const signIn = {
+      token: { access_token: "", token_type: "Bearer", refresh_token: "rt-ben", expiry: expect.any(String) },
+      auth_method: "consumer",
+      id_token_email: "ben@example.com",
+    };
+    expect(agyKeychain()).toEqual(signIn);
+    expect(JSON.parse(readFileSync(agyFile(), "utf8"))).toEqual(signIn);
+    expect(holder(t3File())).toBe("rt-ana");
+  });
+
+  test.skipIf(!macOS)("current reads the agy CLI's keychain before its file, and switch keeps the first sign-in it replaces", async () => {
+    mkdirSync(join(agyFile(), ".."), { recursive: true });
+    writeFileSync(agyFile(), JSON.stringify({ token: { refresh_token: "rt-ana" } }));
+    await main(["current", "--json"]);
+    expect(JSON.parse(printed[0]).agy).toBe("ana@example.com");
+
+    // The CLI's own login, to an account that isn't saved here.
+    const ownLogin = goKeyring({ token: { refresh_token: "rt-own-login" }, auth_method: "consumer", writer_id: "w" });
+    writeKeychain("gemini", "antigravity", ownLogin);
+    await main(["current", "--json"]);
+    expect(JSON.parse(printed[1]).agy).toBeNull();
+
+    await main(["switch", "ben", "--target", "agy", "--json"]);
+    expect(JSON.parse(printed[2]).previous).toEqual({ agy: null });
+    await main(["switch", "ana", "--target", "agy", "--json"]);
+    expect(JSON.parse(printed[3]).previous).toEqual({ agy: "ben@example.com" });
+    await main(["current", "--json"]);
+    expect(JSON.parse(printed[4]).agy).toBe("ana@example.com");
+
+    const bak = join(home, ".agy-switch/agy-cli-keychain.bak");
+    expect(readFileSync(bak, "utf8")).toBe(ownLogin);
+    expect(statSync(bak).mode & 0o777).toBe(0o600);
+  });
+
+  test.skipIf(!macOS)("a switch the keychain refuses changes nothing", async () => {
+    writeFileSync(
+      join(home, ".agy-switch/accounts.json"),
+      JSON.stringify({ version: 1, accounts: [account("ana"), account("ben", { accessToken: "a".repeat(4000) })] }),
+    );
+    await main(["switch", "ben", "--target", "both", "--json"]);
+    expect(process.exitCode).toBe(1);
+    expect(JSON.parse(printed[0]).error.message).toBe(
+      "Couldn't write the agy CLI's sign-in to your keychain. Nothing was changed. Details: The sign-in is too long for the keychain.",
+    );
+    expect(readKeychain("gemini", "antigravity")).toBeNull();
+    expect(existsSync(agyFile())).toBe(false);
+    expect(holder(t3File())).toBe("rt-ana");
   });
 
   test("an ambiguous account in --json mode returns the candidates as data", async () => {
