@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { login } from "./login.ts";
 import { agyTokenPath, harnessBinary, storePath, t3AcpRoot, tildify } from "./paths.ts";
+import { carryPluginOAuth } from "./plugin-auth.ts";
 import { IMAGE_GENERATION, matchGroup, probeQuota, type QuotaGroup } from "./quota.ts";
 import {
   REQUIRED_SCOPES,
@@ -491,6 +492,7 @@ function cmdSwitch({ args, flags }: Parsed) {
   if (targets.includes("agy")) writeAgy(account, accounts);
   if (targets.includes("t3")) writeT3(account, t3Dirs);
   markUsed(account.id);
+  const pluginAuth = carryPluginOAuth(account);
 
   const previous = Object.fromEntries(targets.map((t) => [t, before[t as "t3" | "agy"]]));
   // The agy CLI saves each refreshed sign-in over whatever the keychain holds, so a session that
@@ -498,7 +500,16 @@ function cmdSwitch({ args, flags }: Parsed) {
   const note =
     "Sessions already running keep the account they started with. When one refreshes its sign-in, within the hour, it writes that account back. " +
     "Before each batch, check agy-switch current, and switch again if it changed back.";
-  if (flags.json) return printJson({ switchedTo: account.email, target, previous, note });
+  if (flags.json) {
+    return printJson({
+      switchedTo: account.email,
+      target,
+      previous,
+      ...(pluginAuth.carried.length > 0 ? { carriedPlugins: pluginAuth.carried } : {}),
+      ...(pluginAuth.warning ? { pluginAuthWarning: pluginAuth.warning } : {}),
+      note,
+    });
+  }
 
   for (const t of targets) {
     const app = appNames([t]);
@@ -507,6 +518,10 @@ function cmdSwitch({ args, flags }: Parsed) {
     else if (was) console.log(`Switched ${app} from ${was} to ${account.email}.`);
     else console.log(`Switched ${app} to ${account.email}. It wasn't using a saved account before.`);
   }
+  if (pluginAuth.carried.length > 0) {
+    console.log(`Carried over plugin sign-in for ${pluginAuth.carried.join(", ")}.`);
+  }
+  if (pluginAuth.warning) console.log(pluginAuth.warning);
   console.log(note);
 }
 
@@ -592,6 +607,7 @@ async function cmdAdd({ flags }: Parsed) {
     acpToken: result.acpToken,
     accessToken: result.accessToken,
     idToken: result.idToken,
+    googleUserId: result.googleUserId,
     expiresAt: result.expiresAt,
     grantedScopes: result.grantedScopes,
     quota: null,

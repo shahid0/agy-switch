@@ -148,6 +148,10 @@ $ agy-switch switch ben@example.com --json
   only one.
 - `switch` refuses an account that can't run agents in T3 Code before it writes
   anything.
+- `switch` also carries over the newest unexpired remote MCP plugin sign-ins
+  (such as Figma under `antigravity.plugins`) to the target account's scope,
+  without overwriting a newer valid token already on the target or copying
+  expired ones. When any are carried over, `--json` includes `carriedPlugins`.
 
 Then tell the user which account is now in use, which app changed and what it
 used before (`previous`), and the note.

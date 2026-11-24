@@ -114,6 +114,7 @@ changes anything. To fix one, add it again with `agy-switch add`.
 | Saved accounts and their sign-in tokens | `~/.agy-switch/accounts.json`, readable only by you (mode 0600) |
 | T3 Code sign-in, which its Gemini runs read | `~/.t3/userdata/providers/antigravity/*/antigravity-acp/antigravity-oauth-token`. T3 Code runs agy with its own profile and keeps this sign-in in a file, not the keychain. Where T3 Code's old Antigravity server left an `acp_token.json` beside it, agy-switch keeps that in step too |
 | agy CLI sign-in | On macOS, the keychain item `gemini` / `antigravity`, which the CLI reads first. Then `~/.gemini/antigravity-cli/antigravity-oauth-token` |
+| Remote MCP plugin sign-ins | On macOS, `antigravity.plugins` keychain items (scoped per Google account), plus `plugin-secrets.json` where used. `switch` carries over the newest unexpired token to the target account |
 
 The first time agy-switch writes over a sign-in file, it keeps the old one beside
 it with a `.bak` ending. The first time it writes over a keychain sign-in that

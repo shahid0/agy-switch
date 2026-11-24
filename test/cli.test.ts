@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { main, parseArgs, parseWait, resolveAccount } from "../src/cli.ts";
 import { readKeychain, writeKeychain } from "../src/keychain.ts";
+import { antigravityConfigDir, credentialUserScopePath, PLUGIN_KEYCHAIN_SERVICE, pluginSecretsPath } from "../src/paths.ts";
+import { userScopeForId } from "../src/plugin-auth.ts";
 import type { Account } from "../src/store.ts";
 import { ownKeychain } from "./keychain.ts";
 
@@ -571,5 +573,119 @@ describe("commands", () => {
       quotaError: "Couldn't reach Google. Check your internet connection.",
       quotaCheckedAt: "2026-11-10T00:00:00.000Z",
     });
+  });
+
+  test.skipIf(!macOS)("switch carries over the newest unexpired plugin OAuth keychain token and tracks refresh rotation", async () => {
+    const jwtFor = (sub: string) => `eyJhbGciOiJSUzI1NiJ9.${Buffer.from(JSON.stringify({ sub })).toString("base64url")}.sig`;
+    const figmaKey = "mcp-oauth:figma:https://mcp.figma.com/mcp";
+    const subAna = "sub-ana-1";
+    const subBen = "sub-ben-2";
+    const subDan = "sub-dan-3";
+    const scopeAna = userScopeForId(subAna);
+    const scopeBen = userScopeForId(subBen);
+    const scopeDan = userScopeForId(subDan);
+
+    writeFileSync(
+      join(home, ".agy-switch/accounts.json"),
+      JSON.stringify({
+        version: 1,
+        accounts: [
+          account("ana", { idToken: jwtFor(subAna) }),
+          account("ben", { idToken: jwtFor(subBen) }),
+          account("dan", { idToken: jwtFor(subDan) }),
+        ],
+      }),
+    );
+
+    const farFuture = new Date(Date.now() + 60 * 86_400_000).toISOString();
+    const nearerFuture = new Date(Date.now() + 30 * 86_400_000).toISOString();
+    const expired = new Date(Date.now() - 86_400_000).toISOString();
+    const newest = goKeyring({ token: { access_token: "at-newest", refresh_token: "rt-newest", expiry: farFuture } });
+    const older = goKeyring({ token: { access_token: "at-older", refresh_token: "rt-older", expiry: nearerFuture } });
+    const stale = goKeyring({ token: { access_token: "at-expired", refresh_token: "rt-expired", expiry: expired } });
+
+    writeKeychain(PLUGIN_KEYCHAIN_SERVICE, `${scopeAna}/${figmaKey}`, newest);
+    writeKeychain(PLUGIN_KEYCHAIN_SERVICE, `${scopeDan}/${figmaKey}`, older);
+    writeKeychain(PLUGIN_KEYCHAIN_SERVICE, `${userScopeForId("expired-user")}/${figmaKey}`, stale);
+    mkdirSync(antigravityConfigDir(), { recursive: true });
+
+    // Switch to ben (who has no token yet): receives ana's newest token, not dan's older or the expired one.
+    await main(["switch", "ben", "--json"]);
+    expect(JSON.parse(printed[0])).toMatchObject({ switchedTo: "ben@example.com", carriedPlugins: ["figma"] });
+    expect(readKeychain(PLUGIN_KEYCHAIN_SERVICE, `${scopeBen}/${figmaKey}`)).toBe(newest);
+    expect(readFileSync(credentialUserScopePath(), "utf8")).toBe(scopeBen);
+
+    // Switch back to ana when ana already has an equal token: no redundant carry-over.
+    await main(["switch", "ana", "--target", "t3", "--json"]);
+    expect(JSON.parse(printed[1]).carriedPlugins).toBeUndefined();
+
+    // Simulate ben refreshing Figma to an even newer expiry; switching to ana now updates ana.
+    const rotatedExpiry = new Date(Date.now() + 90 * 86_400_000).toISOString();
+    const rotated = goKeyring({ token: { access_token: "at-rotated", refresh_token: "rt-rotated", expiry: rotatedExpiry } });
+    writeKeychain(PLUGIN_KEYCHAIN_SERVICE, `${scopeBen}/${figmaKey}`, rotated);
+
+    await main(["switch", "ana", "--json"]);
+    expect(JSON.parse(printed[2])).toMatchObject({ switchedTo: "ana@example.com", carriedPlugins: ["figma"] });
+    expect(readKeychain(PLUGIN_KEYCHAIN_SERVICE, `${scopeAna}/${figmaKey}`)).toBe(rotated);
+
+    // Switching to ben now must NOT overwrite ben's newer token with dan's older token.
+    await main(["switch", "ben", "--json"]);
+    expect(JSON.parse(printed[3]).carriedPlugins).toBeUndefined();
+    expect(readKeychain(PLUGIN_KEYCHAIN_SERVICE, `${scopeBen}/${figmaKey}`)).toBe(rotated);
+  });
+
+  test.skipIf(!macOS)("switch never copies an expired plugin OAuth keychain token", async () => {
+    const figmaKey = "mcp-oauth:figma:https://mcp.figma.com/mcp";
+    const scopeAna = userScopeForId("sub-expired-ana");
+    const scopeBen = userScopeForId("sub-expired-ben");
+    writeFileSync(
+      join(home, ".agy-switch/accounts.json"),
+      JSON.stringify({
+        version: 1,
+        accounts: [account("ana", { googleUserId: "sub-expired-ana" }), account("ben", { googleUserId: "sub-expired-ben" })],
+      }),
+    );
+    const expired = goKeyring({
+      token: { access_token: "at-old", refresh_token: "rt-old", expiry: new Date(Date.now() - 3600_000).toISOString() },
+    });
+    writeKeychain(PLUGIN_KEYCHAIN_SERVICE, `${scopeAna}/${figmaKey}`, expired);
+
+    await main(["switch", "ben", "--json"]);
+    expect(JSON.parse(printed[0]).carriedPlugins).toBeUndefined();
+    expect(readKeychain(PLUGIN_KEYCHAIN_SERVICE, `${scopeBen}/${figmaKey}`)).toBeNull();
+  });
+
+  test("switch carries over plugin OAuth tokens in plugin-secrets.json fallback and skips expired ones", async () => {
+    const figmaKey = "mcp-oauth:figma:https://mcp.figma.com/mcp";
+    const oldPluginKey = "mcp-oauth:oldapp:https://mcp.oldapp.example/mcp";
+    const scopeAna = userScopeForId("file-ana");
+    const scopeBen = userScopeForId("file-ben");
+    writeFileSync(
+      join(home, ".agy-switch/accounts.json"),
+      JSON.stringify({
+        version: 1,
+        accounts: [account("ana", { googleUserId: "file-ana" }), account("ben", { googleUserId: "file-ben" })],
+      }),
+    );
+
+    const validToken = { token: { access_token: "at-valid", refresh_token: "rt-valid", expiry: new Date(Date.now() + 86_400_000).toISOString() } };
+    const expiredToken = { token: { access_token: "at-dead", refresh_token: "rt-dead", expiry: new Date(Date.now() - 86_400_000).toISOString() } };
+    mkdirSync(antigravityConfigDir(), { recursive: true });
+    writeFileSync(
+      pluginSecretsPath(),
+      JSON.stringify({
+        [`${scopeAna}/${figmaKey}`]: validToken,
+        [`${scopeAna}/${oldPluginKey}`]: expiredToken,
+      }),
+    );
+
+    await main(["switch", "ben", "--target", "t3", "--json"]);
+    expect(JSON.parse(printed[0])).toMatchObject({ switchedTo: "ben@example.com", carriedPlugins: ["figma"] });
+
+    const saved = JSON.parse(readFileSync(pluginSecretsPath(), "utf8"));
+    expect(saved[`${scopeBen}/${figmaKey}`]).toEqual(validToken);
+    expect(saved[`${scopeBen}/${oldPluginKey}`]).toBeUndefined();
+    expect(statSync(pluginSecretsPath()).mode & 0o777).toBe(0o600);
+    expect(readdirSync(antigravityConfigDir()).filter((f) => f.includes(".tmp-"))).toEqual([]);
   });
 });

@@ -26,6 +26,22 @@ export const agyTokenPath = () => join(home(), ".gemini", "antigravity-cli", AGY
 /** The `agy` CLI's sign-in in the macOS keychain, which it reads before its token file. */
 export const AGY_KEYCHAIN = { service: "gemini", account: "antigravity" } as const;
 
+/** The macOS keychain service where Antigravity stores user-scoped plugin OAuth tokens. */
+export const PLUGIN_KEYCHAIN_SERVICE = "antigravity.plugins";
+
+/**
+ * Antigravity's config folder, matching Go's os.UserConfigDir() + "antigravity".
+ * Holds credential-user-scope and (on non-macOS or keychain overflow) plugin-secrets.json.
+ */
+export function antigravityConfigDir(): string {
+  if (process.platform === "darwin") return join(home(), "Library", "Application Support", "antigravity");
+  if (process.platform === "win32") return join(process.env.APPDATA?.trim() || join(home(), "AppData", "Roaming"), "antigravity");
+  return join(process.env.XDG_CONFIG_HOME?.trim() || join(home(), ".config"), "antigravity");
+}
+
+export const pluginSecretsPath = () => join(antigravityConfigDir(), "plugin-secrets.json");
+export const credentialUserScopePath = () => join(antigravityConfigDir(), "credential-user-scope");
+
 /** The first keychain sign-in agy-switch wrote over that isn't a saved account, such as the agy CLI's own login. */
 export const agyKeychainBackupPath = () => join(storeDir(), "agy-cli-keychain.bak");
 

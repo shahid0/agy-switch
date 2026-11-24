@@ -16,6 +16,7 @@ export type LoginResult = {
   grantedScopes: string[];
   accessToken: string;
   idToken?: string;
+  googleUserId?: string;
   expiresAt: number;
   email: string;
   name: string;
@@ -223,12 +224,13 @@ async function identify(token: {
     headers: { Authorization: `Bearer ${grant.access_token}` },
   });
   if (!info.ok) throw new Error(`Couldn't tell which Google account signed in (HTTP ${info.status}). Nothing was saved.`);
-  const who = (await info.json()) as { email?: string; name?: string };
+  const who = (await info.json()) as { id?: string; email?: string; name?: string };
 
   return {
     grantedScopes: (grant.scope ?? "").split(/\s+/).filter(Boolean),
     accessToken: grant.access_token,
     idToken: grant.id_token,
+    googleUserId: who.id || undefined,
     expiresAt: Date.now() + Math.max(60, grant.expires_in - 60) * 1000,
     email: who.email ?? "",
     name: who.name ?? who.email ?? "",
