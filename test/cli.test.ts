@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { main, parseArgs, parseWait, resolveAccount } from "../src/cli.ts";
 import { readKeychain, writeKeychain } from "../src/keychain.ts";
+import { antigravityConfigDir, credentialUserScopePath, PLUGIN_KEYCHAIN_SERVICE, pluginSecretsPath } from "../src/paths.ts";
+import { userScopeForId } from "../src/plugin-auth.ts";
 import type { Account } from "../src/store.ts";
 import { ownKeychain } from "./keychain.ts";
 
@@ -157,7 +159,11 @@ describe("resolveAccount", () => {
 describe("commands", () => {
   let home: string;
   let printed: string[];
-  const t3File = () => join(home, ".t3/userdata/providers/antigravity/i1/antigravity-acp/acp_token.json");
+  /** The agy folder in T3 Code's profile, where its Gemini runs read their sign-in. */
+  const t3Dir = () => join(home, ".t3/userdata/providers/antigravity/i1/antigravity-acp");
+  const t3File = () => join(t3Dir(), "antigravity-oauth-token");
+  /** What T3 Code's old Antigravity server signed in with. */
+  const t3Legacy = () => join(t3Dir(), "acp_token.json");
   const agyFile = () => join(home, ".gemini/antigravity-cli/antigravity-oauth-token");
   const holder = (path: string) => {
     const raw = JSON.parse(readFileSync(path, "utf8"));
@@ -183,8 +189,8 @@ describe("commands", () => {
     const accounts = [account("ana"), account("ben"), account("cleo", { grantedScopes: SCOPES.slice(0, 2) })];
     mkdirSync(join(home, ".agy-switch"), { recursive: true });
     writeFileSync(join(home, ".agy-switch/accounts.json"), JSON.stringify({ version: 1, accounts }));
-    mkdirSync(join(t3File(), ".."), { recursive: true });
-    writeFileSync(t3File(), JSON.stringify(accounts[0].acpToken));
+    mkdirSync(t3Dir(), { recursive: true });
+    writeFileSync(t3File(), JSON.stringify({ token: { refresh_token: "rt-ana" } }));
     printed = [];
     spyOn(console, "log").mockImplementation((line) => void printed.push(String(line)));
     spyOn(console, "error").mockImplementation((line) => void printed.push(String(line)));
@@ -222,6 +228,73 @@ describe("commands", () => {
     });
     expect(holder(t3File())).toBe("rt-ben");
     expect(holder(agyFile())).toBe("rt-ben");
+  });
+
+  test("switch signs T3 Code's Gemini runs in through the token file agy reads in its profile, even when there's none yet", async () => {
+    rmSync(t3File());
+    await main(["switch", "ben", "--target", "t3", "--json"]);
+    expect(JSON.parse(printed[0]).previous).toEqual({ t3: null });
+    expect(JSON.parse(readFileSync(t3File(), "utf8"))).toEqual({
+      token: { access_token: "", token_type: "Bearer", refresh_token: "rt-ben", expiry: expect.any(String) },
+      auth_method: "consumer",
+      id_token_email: "ben@example.com",
+    });
+    expect(statSync(t3File()).mode & 0o777).toBe(0o600);
+    // No acp_token.json made up, and no temporary file left behind.
+    expect(readdirSync(t3Dir())).toEqual(["antigravity-oauth-token"]);
+  });
+
+  test("switch keeps acp_token.json in step where T3 Code's old Antigravity server left one, and keeps the first sign-ins it replaces", async () => {
+    writeFileSync(t3Legacy(), JSON.stringify(account("ana").acpToken));
+    await main(["switch", "ben", "--target", "t3", "--json"]);
+    expect(holder(t3File())).toBe("rt-ben");
+    expect(JSON.parse(readFileSync(t3Legacy(), "utf8"))).toEqual(account("ben").acpToken);
+    expect(holder(`${t3File()}.bak`)).toBe("rt-ana");
+    expect(holder(`${t3Legacy()}.bak`)).toBe("rt-ana");
+  });
+
+  test("current reads T3 Code's account from the token file its Gemini runs read, not acp_token.json", async () => {
+    writeFileSync(t3Legacy(), JSON.stringify(account("ben").acpToken));
+    await main(["current", "--json"]);
+    expect(JSON.parse(printed[0]).t3).toBe("ana@example.com");
+  });
+
+  test("doctor fails while T3 Code's Gemini runs have no sign-in, and passes once switch writes one", async () => {
+    // What T3 Code 0.1.12 found: only the old server's acp_token.json, which agy doesn't read.
+    rmSync(t3File());
+    writeFileSync(t3Legacy(), JSON.stringify(account("ana").acpToken));
+    const t3Check = () => JSON.parse(printed.at(-1)!).checks.find((c: { name: string }) => c.name === "t3");
+
+    await main(["doctor", "--json"]);
+    expect(process.exitCode).toBe(1);
+    expect(t3Check()).toEqual({
+      name: "t3",
+      ok: false,
+      detail:
+        "Gemini runs can't sign in: ~/.t3/userdata/providers/antigravity/i1/antigravity-acp/antigravity-oauth-token holds no sign-in. " +
+        "Fix it with: agy-switch switch <account>",
+    });
+
+    await main(["switch", "ana", "--json"]);
+    await main(["doctor", "--json"]);
+    expect(t3Check()).toEqual({
+      name: "t3",
+      ok: true,
+      detail: "Uses ana@example.com (1 sign-in file under ~/.t3/userdata/providers/antigravity)",
+    });
+  });
+
+  test("switch without a T3 Code profile changes nothing and says how to make one", async () => {
+    rmSync(join(home, ".t3"), { recursive: true });
+    await main(["switch", "ben", "--json"]);
+    expect(process.exitCode).toBe(1);
+    expect(JSON.parse(printed[0]).error).toMatchObject({
+      code: "no_t3_signin",
+      message:
+        "Couldn't find T3 Code's Antigravity profile under ~/.t3/userdata/providers/antigravity. " +
+        "Use Antigravity in T3 Code once, then try again. Nothing was changed.",
+    });
+    expect(existsSync(agyFile())).toBe(false);
   });
 
   test.skipIf(!macOS)("switch --target agy writes the agy CLI's keychain item and its file, in the CLI's format", async () => {
@@ -368,7 +441,7 @@ describe("commands", () => {
     ]);
   });
 
-  test("ran-out image records the limit for the account the agy CLI uses, and pick --for image ranks it last", async () => {
+  test("ran-out image records the limit for the account in use, and pick --for image ranks it last", async () => {
     agyUses("ana");
     await main(["ran-out", "image", "--resets-in", "4h57m19.81s", "--json"]);
     const recorded = JSON.parse(printed[0]);
@@ -432,7 +505,7 @@ describe("commands", () => {
     expect(saved.quota.models.map((b: { name: string }) => b.name)).toEqual(["gemini-5h", "3p-5h"]);
   });
 
-  test("ran-out records the account it's given, and asks for one when the agy CLI uses an unsaved account", async () => {
+  test("ran-out records the account it's given, and asks for one when T3 Code and the agy CLI use different accounts", async () => {
     await main(["ran-out", "image", "ben", "--resets-in", "1h", "--json"]);
     expect(JSON.parse(printed[0]).account).toBe("ben@example.com");
     const accounts = JSON.parse(readFileSync(join(home, ".agy-switch/accounts.json"), "utf8")).accounts;
@@ -445,7 +518,10 @@ describe("commands", () => {
     agyUses("unsaved");
     await main(["ran-out", "image", "--resets-in", "1h", "--json"]);
     expect(process.exitCode).toBe(2);
-    expect(JSON.parse(printed[1]).error.message).toStartWith("The agy CLI isn't using a saved account.");
+    expect(JSON.parse(printed[1]).error.message).toBe(
+      "T3 Code uses ana@example.com and the agy CLI uses an account that isn't saved here. " +
+        "Name the account whose image call failed, such as: agy-switch ran-out image ana@example.com --resets-in 4h57m19s",
+    );
   });
 
   test("ran-out records only image generation, and needs the wait", async () => {
@@ -497,5 +573,119 @@ describe("commands", () => {
       quotaError: "Couldn't reach Google. Check your internet connection.",
       quotaCheckedAt: "2026-11-10T00:00:00.000Z",
     });
+  });
+
+  test.skipIf(!macOS)("switch carries over the newest unexpired plugin OAuth keychain token and tracks refresh rotation", async () => {
+    const jwtFor = (sub: string) => `eyJhbGciOiJSUzI1NiJ9.${Buffer.from(JSON.stringify({ sub })).toString("base64url")}.sig`;
+    const figmaKey = "mcp-oauth:figma:https://mcp.figma.com/mcp";
+    const subAna = "sub-ana-1";
+    const subBen = "sub-ben-2";
+    const subDan = "sub-dan-3";
+    const scopeAna = userScopeForId(subAna);
+    const scopeBen = userScopeForId(subBen);
+    const scopeDan = userScopeForId(subDan);
+
+    writeFileSync(
+      join(home, ".agy-switch/accounts.json"),
+      JSON.stringify({
+        version: 1,
+        accounts: [
+          account("ana", { idToken: jwtFor(subAna) }),
+          account("ben", { idToken: jwtFor(subBen) }),
+          account("dan", { idToken: jwtFor(subDan) }),
+        ],
+      }),
+    );
+
+    const farFuture = new Date(Date.now() + 60 * 86_400_000).toISOString();
+    const nearerFuture = new Date(Date.now() + 30 * 86_400_000).toISOString();
+    const expired = new Date(Date.now() - 86_400_000).toISOString();
+    const newest = goKeyring({ token: { access_token: "at-newest", refresh_token: "rt-newest", expiry: farFuture } });
+    const older = goKeyring({ token: { access_token: "at-older", refresh_token: "rt-older", expiry: nearerFuture } });
+    const stale = goKeyring({ token: { access_token: "at-expired", refresh_token: "rt-expired", expiry: expired } });
+
+    writeKeychain(PLUGIN_KEYCHAIN_SERVICE, `${scopeAna}/${figmaKey}`, newest);
+    writeKeychain(PLUGIN_KEYCHAIN_SERVICE, `${scopeDan}/${figmaKey}`, older);
+    writeKeychain(PLUGIN_KEYCHAIN_SERVICE, `${userScopeForId("expired-user")}/${figmaKey}`, stale);
+    mkdirSync(antigravityConfigDir(), { recursive: true });
+
+    // Switch to ben (who has no token yet): receives ana's newest token, not dan's older or the expired one.
+    await main(["switch", "ben", "--json"]);
+    expect(JSON.parse(printed[0])).toMatchObject({ switchedTo: "ben@example.com", carriedPlugins: ["figma"] });
+    expect(readKeychain(PLUGIN_KEYCHAIN_SERVICE, `${scopeBen}/${figmaKey}`)).toBe(newest);
+    expect(readFileSync(credentialUserScopePath(), "utf8")).toBe(scopeBen);
+
+    // Switch back to ana when ana already has an equal token: no redundant carry-over.
+    await main(["switch", "ana", "--target", "t3", "--json"]);
+    expect(JSON.parse(printed[1]).carriedPlugins).toBeUndefined();
+
+    // Simulate ben refreshing Figma to an even newer expiry; switching to ana now updates ana.
+    const rotatedExpiry = new Date(Date.now() + 90 * 86_400_000).toISOString();
+    const rotated = goKeyring({ token: { access_token: "at-rotated", refresh_token: "rt-rotated", expiry: rotatedExpiry } });
+    writeKeychain(PLUGIN_KEYCHAIN_SERVICE, `${scopeBen}/${figmaKey}`, rotated);
+
+    await main(["switch", "ana", "--json"]);
+    expect(JSON.parse(printed[2])).toMatchObject({ switchedTo: "ana@example.com", carriedPlugins: ["figma"] });
+    expect(readKeychain(PLUGIN_KEYCHAIN_SERVICE, `${scopeAna}/${figmaKey}`)).toBe(rotated);
+
+    // Switching to ben now must NOT overwrite ben's newer token with dan's older token.
+    await main(["switch", "ben", "--json"]);
+    expect(JSON.parse(printed[3]).carriedPlugins).toBeUndefined();
+    expect(readKeychain(PLUGIN_KEYCHAIN_SERVICE, `${scopeBen}/${figmaKey}`)).toBe(rotated);
+  });
+
+  test.skipIf(!macOS)("switch never copies an expired plugin OAuth keychain token", async () => {
+    const figmaKey = "mcp-oauth:figma:https://mcp.figma.com/mcp";
+    const scopeAna = userScopeForId("sub-expired-ana");
+    const scopeBen = userScopeForId("sub-expired-ben");
+    writeFileSync(
+      join(home, ".agy-switch/accounts.json"),
+      JSON.stringify({
+        version: 1,
+        accounts: [account("ana", { googleUserId: "sub-expired-ana" }), account("ben", { googleUserId: "sub-expired-ben" })],
+      }),
+    );
+    const expired = goKeyring({
+      token: { access_token: "at-old", refresh_token: "rt-old", expiry: new Date(Date.now() - 3600_000).toISOString() },
+    });
+    writeKeychain(PLUGIN_KEYCHAIN_SERVICE, `${scopeAna}/${figmaKey}`, expired);
+
+    await main(["switch", "ben", "--json"]);
+    expect(JSON.parse(printed[0]).carriedPlugins).toBeUndefined();
+    expect(readKeychain(PLUGIN_KEYCHAIN_SERVICE, `${scopeBen}/${figmaKey}`)).toBeNull();
+  });
+
+  test("switch carries over plugin OAuth tokens in plugin-secrets.json fallback and skips expired ones", async () => {
+    const figmaKey = "mcp-oauth:figma:https://mcp.figma.com/mcp";
+    const oldPluginKey = "mcp-oauth:oldapp:https://mcp.oldapp.example/mcp";
+    const scopeAna = userScopeForId("file-ana");
+    const scopeBen = userScopeForId("file-ben");
+    writeFileSync(
+      join(home, ".agy-switch/accounts.json"),
+      JSON.stringify({
+        version: 1,
+        accounts: [account("ana", { googleUserId: "file-ana" }), account("ben", { googleUserId: "file-ben" })],
+      }),
+    );
+
+    const validToken = { token: { access_token: "at-valid", refresh_token: "rt-valid", expiry: new Date(Date.now() + 86_400_000).toISOString() } };
+    const expiredToken = { token: { access_token: "at-dead", refresh_token: "rt-dead", expiry: new Date(Date.now() - 86_400_000).toISOString() } };
+    mkdirSync(antigravityConfigDir(), { recursive: true });
+    writeFileSync(
+      pluginSecretsPath(),
+      JSON.stringify({
+        [`${scopeAna}/${figmaKey}`]: validToken,
+        [`${scopeAna}/${oldPluginKey}`]: expiredToken,
+      }),
+    );
+
+    await main(["switch", "ben", "--target", "t3", "--json"]);
+    expect(JSON.parse(printed[0])).toMatchObject({ switchedTo: "ben@example.com", carriedPlugins: ["figma"] });
+
+    const saved = JSON.parse(readFileSync(pluginSecretsPath(), "utf8"));
+    expect(saved[`${scopeBen}/${figmaKey}`]).toEqual(validToken);
+    expect(saved[`${scopeBen}/${oldPluginKey}`]).toBeUndefined();
+    expect(statSync(pluginSecretsPath()).mode & 0o777).toBe(0o600);
+    expect(readdirSync(antigravityConfigDir()).filter((f) => f.includes(".tmp-"))).toEqual([]);
   });
 });

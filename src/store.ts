@@ -36,6 +36,8 @@ export type Account = {
   /** Fresh access token + identity, for `agy` CLI writes and labelling. */
   accessToken?: string;
   idToken?: string;
+  /** Google's stable subject ID (`sub`), used to match Antigravity's plugin credential scope. */
+  googleUserId?: string;
   expiresAt?: number;
   /** Scopes Google actually granted. Authoritative; the token file's list is not. */
   grantedScopes: string[];

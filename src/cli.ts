@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { login } from "./login.ts";
 import { agyTokenPath, harnessBinary, storePath, t3AcpRoot, tildify } from "./paths.ts";
+import { carryPluginOAuth } from "./plugin-auth.ts";
 import { IMAGE_GENERATION, matchGroup, probeQuota, type QuotaGroup } from "./quota.ts";
 import {
   REQUIRED_SCOPES,
@@ -18,10 +19,10 @@ import {
   type Account,
   type QuotaBucket,
 } from "./store.ts";
-import { activeAccounts, findAcpTokenPaths, openInBrowser, writeAcp, writeAgy } from "./write.ts";
+import { activeAccounts, findT3AgyDirs, openInBrowser, t3SignIns, writeAgy, writeT3 } from "./write.ts";
 
 const HELP = `agy-switch switches the Google Antigravity account that T3 Code and the
-agy CLI use. T3 Code runs Gemini through the agy CLI.
+agy CLI use. T3 Code runs Gemini through the agy CLI, with a sign-in of its own.
 
 Commands
   current                   Which account T3 Code and the agy CLI use now
@@ -32,7 +33,8 @@ Commands
                             Use this account. Default target: both
   ran-out image [<account>] --resets-in <wait>
                             Record that image generation ran out, which Google
-                            doesn't report. Default: the account the agy CLI uses
+                            doesn't report. Default: the account T3 Code and
+                            the agy CLI use
   add [--browser]           Sign in with Google and save the account
   remove <account>          Delete a saved account
   doctor                    Check your setup
@@ -184,6 +186,12 @@ function span(iso: string): string {
 
 const appNames = (targets: string[]) =>
   targets.map((t) => (t === "t3" ? "T3 Code" : "the agy CLI")).join(" and ");
+
+/** "in use by T3 Code and the agy CLI", or "" when neither uses the account. */
+const inUseBy = (active: { t3: boolean; agy: boolean }) => {
+  const apps = (["t3", "agy"] as const).filter((t) => active[t]);
+  return apps.length > 0 ? `in use by ${appNames(apps)}` : "";
+};
 
 function table(rows: string[][]) {
   const widths = rows[0].map((_, i) => Math.max(...rows.map((r) => r[i].length)));
@@ -385,9 +393,7 @@ async function cmdPick({ flags }: Parsed) {
           ? `couldn't read quota: ${c.quotaError}`
           : "Google reported no quota for this group"
         : `${c.shown}${c.resetsAt && c.quotaLeft < 100 ? `, resets in ${span(c.resetsAt)}` : ""}`,
-      [c.active.agy && "in use", "canRunAgents" in c && !c.canRunAgents && "can't run agents"]
-        .filter(Boolean)
-        .join(", "),
+      [inUseBy(c.active), "canRunAgents" in c && !c.canRunAgents && "can't run agents"].filter(Boolean).join(", "),
     ]),
   );
   if (note) console.log(`\n${note}`);
@@ -471,11 +477,11 @@ function cmdSwitch({ args, flags }: Parsed) {
       { missingScopes: missing },
     );
   }
-  const t3Paths = targets.includes("t3") ? findAcpTokenPaths() : [];
-  if (targets.includes("t3") && t3Paths.length === 0) {
+  const t3Dirs = targets.includes("t3") ? findT3AgyDirs() : [];
+  if (targets.includes("t3") && t3Dirs.length === 0) {
     throw new CliError(
-      `Couldn't find T3 Code's Antigravity sign-in under ${tildify(t3AcpRoot())}. ` +
-        "Sign in to Antigravity in T3 Code once, then try again. Nothing was changed.",
+      `Couldn't find T3 Code's Antigravity profile under ${tildify(t3AcpRoot())}. ` +
+        "Use Antigravity in T3 Code once, then try again. Nothing was changed.",
       1,
       "no_t3_signin",
     );
@@ -484,8 +490,9 @@ function cmdSwitch({ args, flags }: Parsed) {
   const before = activeAccounts(accounts);
   // The agy CLI first: its keychain write can fail, and then nothing was changed.
   if (targets.includes("agy")) writeAgy(account, accounts);
-  if (targets.includes("t3")) writeAcp(account, t3Paths);
+  if (targets.includes("t3")) writeT3(account, t3Dirs);
   markUsed(account.id);
+  const pluginAuth = carryPluginOAuth(account);
 
   const previous = Object.fromEntries(targets.map((t) => [t, before[t as "t3" | "agy"]]));
   // The agy CLI saves each refreshed sign-in over whatever the keychain holds, so a session that
@@ -493,7 +500,16 @@ function cmdSwitch({ args, flags }: Parsed) {
   const note =
     "Sessions already running keep the account they started with. When one refreshes its sign-in, within the hour, it writes that account back. " +
     "Before each batch, check agy-switch current, and switch again if it changed back.";
-  if (flags.json) return printJson({ switchedTo: account.email, target, previous, note });
+  if (flags.json) {
+    return printJson({
+      switchedTo: account.email,
+      target,
+      previous,
+      ...(pluginAuth.carried.length > 0 ? { carriedPlugins: pluginAuth.carried } : {}),
+      ...(pluginAuth.warning ? { pluginAuthWarning: pluginAuth.warning } : {}),
+      note,
+    });
+  }
 
   for (const t of targets) {
     const app = appNames([t]);
@@ -502,6 +518,10 @@ function cmdSwitch({ args, flags }: Parsed) {
     else if (was) console.log(`Switched ${app} from ${was} to ${account.email}.`);
     else console.log(`Switched ${app} to ${account.email}. It wasn't using a saved account before.`);
   }
+  if (pluginAuth.carried.length > 0) {
+    console.log(`Carried over plugin sign-in for ${pluginAuth.carried.join(", ")}.`);
+  }
+  if (pluginAuth.warning) console.log(pluginAuth.warning);
   console.log(note);
 }
 
@@ -525,10 +545,18 @@ function cmdRanOut({ args, flags }: Parsed) {
   if (!wait) throw usage("--resets-in takes the wait from the failed call, such as --resets-in 4h57m19s.");
 
   const accounts = readAccounts();
-  // Image runs go through the agy CLI, T3 Code's included, so its account is the one that ran out.
-  const ref = args[1] ?? activeAccounts(accounts).agy;
+  // An image call in T3 Code runs on T3 Code's sign-in, and one in a terminal on the agy CLI's.
+  // When they differ, only the caller knows which account the failed call used.
+  const active = activeAccounts(accounts);
+  const ref = args[1] ?? (active.t3 === active.agy ? active.agy : null);
   if (!ref) {
-    throw usage("The agy CLI isn't using a saved account. Name the account, such as: agy-switch ran-out image you@example.com --resets-in 4h57m19s");
+    const using = (email: string | null) => email ?? "an account that isn't saved here";
+    throw usage(
+      active.t3 === active.agy
+        ? "Neither T3 Code nor the agy CLI uses a saved account. Name the account, such as: agy-switch ran-out image you@example.com --resets-in 4h57m19s"
+        : `T3 Code uses ${using(active.t3)} and the agy CLI uses ${using(active.agy)}. ` +
+            `Name the account whose image call failed, such as: agy-switch ran-out image ${active.t3 ?? active.agy} --resets-in 4h57m19s`,
+    );
   }
   const account = resolveAccount(ref, accounts);
   const resetsAt = new Date(Date.now() + wait).toISOString();
@@ -579,6 +607,7 @@ async function cmdAdd({ flags }: Parsed) {
     acpToken: result.acpToken,
     accessToken: result.accessToken,
     idToken: result.idToken,
+    googleUserId: result.googleUserId,
     expiresAt: result.expiresAt,
     grantedScopes: result.grantedScopes,
     quota: null,
@@ -619,7 +648,8 @@ function cmdAgent() {
 function cmdDoctor({ flags }: Parsed) {
   const accounts = readAccounts();
   const harness = harnessBinary();
-  const t3 = findAcpTokenPaths();
+  const t3 = t3SignIns();
+  const signedOut = t3.find((s) => !s.refreshToken);
   const active = activeAccounts(accounts);
   const checks = [
     {
@@ -636,11 +666,13 @@ function cmdDoctor({ flags }: Parsed) {
     },
     {
       name: "t3",
-      ok: t3.length > 0,
+      ok: t3.length > 0 && !signedOut,
       detail:
-        t3.length > 0
-          ? `Uses ${active.t3 ?? "an account that isn't saved here"} (${plural(t3.length, "sign-in file")} under ${tildify(t3AcpRoot())})`
-          : `No Antigravity sign-in under ${tildify(t3AcpRoot())}. Sign in to Antigravity in T3 Code once.`,
+        t3.length === 0
+          ? `No Antigravity profile under ${tildify(t3AcpRoot())}. Use Antigravity in T3 Code once.`
+          : signedOut
+            ? `Gemini runs can't sign in: ${tildify(signedOut.path)} holds no sign-in. Fix it with: agy-switch switch <account>`
+            : `Uses ${active.t3 ?? "an account that isn't saved here"} (${plural(t3.length, "sign-in file")} under ${tildify(t3AcpRoot())})`,
     },
     {
       name: "agy",

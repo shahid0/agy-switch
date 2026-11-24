@@ -1,7 +1,8 @@
 # agy-switch for AI agents
 
 agy-switch switches the Google Antigravity account that T3 Code and the `agy`
-CLI use. T3 Code runs Gemini through the agy CLI, so they share one sign-in.
+CLI use. T3 Code runs Gemini through the agy CLI but keeps a sign-in of its own,
+and a switch changes both.
 It's there so you can keep working without the user, overnight too, when an
 account runs low on quota.
 
@@ -55,9 +56,9 @@ $ agy-switch current --json
 {"t3": "dev@example.com", "agy": "dev@example.com"}
 ```
 
-`agy` is the account Gemini runs use, T3 Code's included. `t3` is the account
-in T3 Code's own sign-in files. `null` means that sign-in isn't any saved
-account.
+`t3` is the account T3 Code's Gemini runs use. `agy` is the account the agy CLI
+uses when you run it yourself, such as in a terminal. `null` means there's no
+sign-in, or one that isn't a saved account.
 
 ## Which account has the most quota?
 
@@ -112,8 +113,9 @@ limit in about 5 minutes while its Gemini Models group still had 36% left.
 When an image call fails on quota, record it with
 `agy-switch ran-out image --resets-in <wait>`, then switch. `<wait>` is the
 error's `quotaResetDelay`, or the time in "Your quota will reset after
-4h57m19s". Run it before you switch: it records the account the agy CLI uses,
-or the account you name after `image`.
+4h57m19s". Run it before you switch: it records the account T3 Code and the agy
+CLI use, or the account you name after `image`. When they use different
+accounts, it asks you to name the one whose image call failed.
 
 ```sh
 $ agy-switch ran-out image --resets-in 4h57m19s --json
@@ -141,11 +143,15 @@ $ agy-switch switch ben@example.com --json
 }
 ```
 
-- The default target is `both`: the agy CLI, which every Gemini run uses, and
-  T3 Code's own sign-in files. `--target agy` or `--target t3` switches only
-  one.
+- The default target is `both`: T3 Code, whose Gemini runs read a sign-in file
+  in its profile, and the agy CLI. `--target t3` or `--target agy` switches
+  only one.
 - `switch` refuses an account that can't run agents in T3 Code before it writes
   anything.
+- `switch` also carries over the newest unexpired remote MCP plugin sign-ins
+  (such as Figma under `antigravity.plugins`) to the target account's scope,
+  without overwriting a newer valid token already on the target or copying
+  expired ones. When any are carried over, `--json` includes `carriedPlugins`.
 
 Then tell the user which account is now in use, which app changed and what it
 used before (`previous`), and the note.
@@ -240,6 +246,9 @@ different account without saying so.
   account back, and sessions started after that use it again. The agy CLI does
   this, and no switch can prevent it. Before each batch, check agy-switch
   current, and switch again if it changed back.
+- **That T3 Code and the agy CLI share a sign-in.** T3 Code's Gemini runs read
+  a sign-in file in its own profile, not the agy CLI's keychain. For them, check
+  `t3` in agy-switch current.
 - **That every account can run agents.** Check `canRunAgents`.
 - **That Google reports every limit.** It doesn't report image generation's own
   limit. See Which `--for` to use.
@@ -253,7 +262,7 @@ different account without saying so.
 | What | Where |
 | :-- | :-- |
 | Saved accounts | `~/.agy-switch/accounts.json`, mode 0600 |
-| T3 Code sign-in | `~/.t3/userdata/providers/antigravity/*/antigravity-acp/acp_token.json` |
+| T3 Code sign-in, which its Gemini runs read | `~/.t3/userdata/providers/antigravity/*/antigravity-acp/antigravity-oauth-token`. Where T3 Code's old Antigravity server left an `acp_token.json` beside it, agy-switch keeps that in step too |
 | agy CLI sign-in | On macOS, the keychain item `gemini`/`antigravity`, read first. Then `~/.gemini/antigravity-cli/antigravity-oauth-token` |
 | The first agy CLI sign-in agy-switch wrote over that isn't a saved account, such as the CLI's own login | `~/.agy-switch/agy-cli-keychain.bak`, mode 0600 |
 | What `add` signs in with | The Antigravity server bundled with T3 Code, or the file in `AGY_SWITCH_HARNESS` |
